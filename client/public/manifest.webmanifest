@@ -1,0 +1,26 @@
+{
+  "name": "Socrates AI",
+  "short_name": "Socrates",
+  "description": "OSCE practice partner for medical students and residents.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FAFAF9",
+  "theme_color": "#5A2E9A",
+  "categories": ["education", "medical", "productivity"],
+  "icons": [
+    {
+      "src": "/brand/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

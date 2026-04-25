@@ -1,0 +1,216 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* shadcn semantic tokens (HSL) — mapped to Socrates AI brand */
+    --background: 60 11% 98%;            /* #FAFAF9 warm off-white */
+    --foreground: 280 17% 10%;           /* #1A1520 warm 950 */
+    --card: 0 0% 100%;
+    --card-foreground: 280 17% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 280 17% 10%;
+
+    --primary: 268 70% 13%;              /* #1E0A38 Purple 800 */
+    --primary-foreground: 268 60% 96%;   /* #F5F1FB Purple 50 */
+
+    --secondary: 268 60% 96%;            /* #F5F1FB */
+    --secondary-foreground: 268 65% 19%; /* #2D1152 Purple 700 */
+
+    --muted: 270 38% 97%;                /* #F8F6FB warm 50 */
+    --muted-foreground: 264 9% 43%;      /* #6B6478 warm 600 */
+
+    --accent: 268 60% 96%;               /* #F5F1FB Purple 50 — muted hover surface */
+    --accent-foreground: 268 65% 19%;    /* #2D1152 Purple 700 */
+    --amber: 39 81% 52%;                 /* #E8A520 Wisdom Amber — dark surfaces only */
+    --amber-foreground: 268 70% 13%;
+
+    --destructive: 28 35% 38%;           /* deep warm brown — no red */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 264 36% 92%;               /* #E8E4F0 warm 100 */
+    --input: 264 18% 80%;                /* #C8C2D4 warm 200 */
+    --ring: 267 54% 39%;                 /* #5A2E9A Purple 500 */
+
+    --radius: 0.625rem;                  /* 10px md */
+
+    /* Brand-specific extras */
+    --brand-accent: 39 81% 52%;          /* #E8A520 Wisdom Amber */
+    --brand-accent-foreground: 268 70% 13%;
+
+    --success: 160 84% 39%;              /* #059669 emerald-600 */
+    --success-foreground: 0 0% 100%;
+    --success-surface: 152 76% 96%;      /* #ECFDF5 emerald-50 */
+
+    --warning: 39 81% 52%;               /* #E8A520 */
+    --warning-foreground: 268 70% 13%;
+    --warning-surface: 42 90% 93%;
+
+    /* Soft neutral shadows — iOS-style layered elevation */
+    --shadow-xs: 0 1px 2px rgb(17 17 26 / 0.04);
+    --shadow-sm: 0 2px 6px rgb(17 17 26 / 0.06);
+    --shadow-md: 0 4px 12px rgb(17 17 26 / 0.06), 0 1px 2px rgb(17 17 26 / 0.04);
+    --shadow-lg: 0 12px 32px rgb(17 17 26 / 0.08), 0 2px 6px rgb(17 17 26 / 0.05);
+    --shadow-focus: 0 0 0 3px rgb(90 46 154 / 0.20); /* keep purple ring */
+    /* Backwards-compatible aliases */
+    --shadow-raised: var(--shadow-md);
+    --shadow-float: var(--shadow-lg);
+  }
+
+  .dark {
+    --background: 268 73% 7%;            /* #0F0520 Purple 900 */
+    --foreground: 268 60% 96%;
+    --card: 268 70% 13%;                 /* #1E0A38 */
+    --card-foreground: 268 60% 96%;
+    --popover: 268 70% 13%;
+    --popover-foreground: 268 60% 96%;
+
+    /* Dark mode CTA = amber per brand spec */
+    --primary: 39 81% 52%;               /* #E8A520 */
+    --primary-foreground: 268 70% 13%;
+
+    --secondary: 268 65% 19%;            /* #2D1152 */
+    --secondary-foreground: 268 60% 96%;
+
+    --muted: 268 65% 19%;
+    --muted-foreground: 270 49% 68%;     /* #A882D6 */
+
+    --accent: 268 61% 26%;               /* #3E1A6E — muted purple hover */
+    --accent-foreground: 268 60% 96%;
+    --amber: 39 81% 52%;                 /* #E8A520 */
+    --amber-foreground: 268 70% 13%;
+
+    --destructive: 30 45% 55%;           /* warm amber-brown — no red */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 268 65% 19%;
+    --input: 268 61% 26%;
+    --ring: 270 41% 51%;                 /* #7B4DB8 */
+
+    --brand-accent: 39 81% 52%;
+    --brand-accent-foreground: 268 70% 13%;
+
+    --success: 160 84% 45%;              /* emerald-500 for dark mode */
+    --success-foreground: 0 0% 100%;
+    --success-surface: 160 84% 10%;      /* dark emerald surface */
+    --warning: 39 81% 52%;
+    --warning-foreground: 268 70% 13%;
+    --warning-surface: 268 65% 19%;
+  }
+}
+
+@layer components {
+  /* Auth page brand gradient — token-equivalent stops (Wisdom Amber → Owl Purple ramp) */
+  .auth-bg {
+    background: radial-gradient(125% 90% at 15% 0%, #F5EAD4 0%, #F8F1E3 18%, #EFE3F3 42%, #D9C4EE 72%, #B892D8 100%);
+  }
+  .dark .auth-bg {
+    background: radial-gradient(125% 90% at 15% 0%, #3E1A6E 0%, #2D1152 22%, #1E0A38 55%, #0F0520 85%, #050010 100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "InterVariable", "Inter", system-ui, sans-serif;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "InterVariable", "Inter", system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+    letter-spacing: -0.006em;
+  }
+  h1, h2 {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "InterVariable", "Inter", system-ui, sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.022em;
+  }
+  h3, h4, h5, h6 {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "InterVariable", "Inter", system-ui, sans-serif;
+    font-weight: 600;
+    letter-spacing: -0.012em;
+  }
+}
+
+@layer components {
+  .label {
+    @apply text-[11px] font-semibold uppercase text-muted-foreground;
+    letter-spacing: 0.10em;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .shadow-raised {
+    box-shadow: var(--shadow-md);
+  }
+  .shadow-float {
+    box-shadow: var(--shadow-lg);
+  }
+  .transition-smooth {
+    transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      opacity 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      color 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      background-color 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      border-color 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      box-shadow 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .text-numeric {
+    font-feature-settings: "tnum";
+    font-variant-numeric: tabular-nums;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "InterVariable", "Inter", system-ui, sans-serif;
+  }
+  .text-display {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "InterVariable", "Inter", system-ui, sans-serif;
+  }
+  .text-h1, .text-h2 {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "InterVariable", "Inter", system-ui, sans-serif;
+  }
+  .text-label {
+    text-transform: uppercase;
+  }
+}
+
+/* Desktop phone-frame backdrop: neutral surface outside the 440px app column */
+.app-backdrop {
+  background-color: hsl(var(--muted) / 0.3);
+}
+.dark .app-backdrop {
+  background-color: #0A0318;
+}
+@media (min-width: 768px) {
+  .phone-frame {
+    box-shadow: var(--shadow-lg);
+  }
+}
+
+/* Safe area insets for mobile */
+@supports (padding: max(0px)) {
+  .safe-bottom {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+  .safe-top {
+    padding-top: max(0rem, env(safe-area-inset-top));
+  }
+}
