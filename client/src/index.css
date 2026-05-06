@@ -192,6 +192,46 @@
   }
 }
 
+/*
+ * Row-list pattern that becomes a 2-col card grid at lg+. Used by the four
+ * list-style pages (My Stations / Library / Mock Exams + the Collections card
+ * grid). Replaces the previous inline soup of
+ *   `rounded-2xl bg-card border border-border/60 shadow-card divide-y divide-border/60 overflow-hidden`
+ * + per-child overrides at lg+.
+ */
+.row-list-responsive {
+  border-radius: 24px;
+  background-color: hsl(var(--card));
+  border: 1px solid hsl(var(--border) / 0.6);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.row-list-responsive > * + * {
+  border-top: 1px solid hsl(var(--border) / 0.6);
+}
+@media (min-width: 1024px) {
+  .row-list-responsive {
+    border-radius: 0;
+    background-color: transparent;
+    border: 0;
+    box-shadow: none;
+    overflow: visible;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+  .row-list-responsive > * + * {
+    border-top: 0;
+  }
+  .row-list-responsive > * {
+    border-radius: 24px;
+    background-color: hsl(var(--card));
+    border: 1px solid hsl(var(--border) / 0.6);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+  }
+}
+
 /* Desktop phone-frame backdrop: neutral surface outside the 440px app column */
 .app-backdrop {
   background-color: hsl(var(--muted) / 0.3);

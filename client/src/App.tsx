@@ -5,18 +5,19 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { BottomNav } from "@/components/BottomNav";
+import { AppShell } from "@/components/AppShell";
 import { lazy, Suspense, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { gcPracticeStorage } from "@/lib/practice-storage";
 import { usePrefs } from "@/hooks/use-prefs";
 import { useToast } from "@/components/ui/use-toast";
-import { shouldHideBottomNav } from "@/lib/navigation";
 
 // Lazy-load pages for better initial load
 const AuthPage = lazy(() => import("@/pages/AuthPage"));
 const ForgotPasswordPage = lazy(() => import("@/pages/ForgotPasswordPage"));
 const ResetPasswordPage = lazy(() => import("@/pages/ResetPasswordPage"));
+const VerifyEmailPage = lazy(() => import("@/pages/VerifyEmailPage"));
+const VerifyEmailCallbackPage = lazy(() => import("@/pages/VerifyEmailCallbackPage"));
 const HomePage = lazy(() => import("@/pages/HomePage"));
 const MyStationsPage = lazy(() => import("@/pages/MyStationsPage"));
 const CollectionsPage = lazy(() => import("@/pages/CollectionsPage"));
@@ -55,6 +56,8 @@ function AppRoutes() {
           <Route path="/auth" component={AuthPage} />
           <Route path="/auth/forgot" component={ForgotPasswordPage} />
           <Route path="/auth/reset/:token" component={ResetPasswordPage} />
+          <Route path="/auth/verify-email" component={VerifyEmailPage} />
+          <Route path="/auth/verify/:token" component={VerifyEmailCallbackPage} />
 
           <Route path="/home">
             <ProtectedRoute>
@@ -248,35 +251,13 @@ export default function App() {
       meta.setAttribute("content", resolvedTheme === "dark" ? "#1E0A38" : "#FAFAF9");
     }
   }, [resolvedTheme]);
-  const [location] = useLocation();
-  const fullBleed = location.startsWith("/auth");
-  // Admin moderation tools are desktop-shaped — render outside the 440px
-  // phone frame. Library and public pages stay in the phone frame so they
-  // feel like every other tab on mobile.
-  const isWideRoute = location.startsWith("/admin/");
-  const showBottomNav = !fullBleed && !shouldHideBottomNav(location);
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          {fullBleed ? (
-            <Suspense fallback={<PageLoader />}>
-              <AppRoutes />
-            </Suspense>
-          ) : isWideRoute ? (
-            <div className="app-backdrop min-h-screen w-full">
-              <div className="relative mx-auto w-full max-w-[960px] min-h-screen bg-background">
-                <AppRoutes />
-              </div>
-            </div>
-          ) : (
-            <div className="app-backdrop min-h-screen w-full">
-              <div className="phone-frame relative mx-auto w-full max-w-[440px] min-h-screen overflow-x-clip bg-background">
-                <AppRoutes />
-              </div>
-            </div>
-          )}
-          {showBottomNav && <BottomNav />}
+          <AppShell>
+            <AppRoutes />
+          </AppShell>
           <Toaster />
         </TooltipProvider>
       </QueryClientProvider>

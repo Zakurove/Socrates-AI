@@ -1668,10 +1668,10 @@ export default function StationEditorPage() {
 
   // Main editor
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="min-h-screen bg-background pb-24 lg:pb-0">
       {/* Sticky save header */}
       <div className="sticky top-0 z-30 h-14 backdrop-blur-xl bg-background/70 border-b border-border/40 safe-top">
-        <div className="mx-auto flex h-14 max-w-2xl items-center justify-between gap-2 px-2">
+        <div className="mx-auto flex h-14 max-w-2xl items-center justify-between gap-2 px-2 lg:px-8 lg:max-w-none">
           <button
             onClick={() => {
               if (dirtyRef.current) {
@@ -1685,6 +1685,10 @@ export default function StationEditorPage() {
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
+          {/* Station title — desktop only, centered between back and save chip */}
+          <span className="hidden lg:block flex-1 min-w-0 px-4 text-center truncate text-caption text-muted-foreground">
+            {title || "Untitled station"}
+          </span>
           <div className="pr-2">
             <SaveStatusChip
               dirty={dirty}
@@ -1696,7 +1700,10 @@ export default function StationEditorPage() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-2xl px-5 pt-6 pb-6 space-y-8">
+      {/* Side-by-side at lg+: left=metadata (sticky), right=checklist+questions (own scroll) */}
+      <div className="lg:grid lg:grid-cols-[2fr_3fr]">
+        {/* ── Left panel — station metadata ── */}
+        <div className="px-5 pt-6 pb-6 space-y-8 lg:sticky lg:top-14 lg:h-[calc(100vh-56px)] lg:overflow-y-auto lg:border-r lg:border-border/40">
         {/* Title + metadata block */}
         <div className="space-y-3">
           <Input
@@ -1912,7 +1919,10 @@ export default function StationEditorPage() {
             </label>
           </div>
         )}
+        </div>{/* /left panel */}
 
+        {/* ── Right panel — checklist builder + examiner questions ── */}
+        <div className="px-5 pt-6 pb-6 space-y-8 lg:h-[calc(100vh-56px)] lg:overflow-y-auto">
         {/* ==================== SECTIONS ==================== */}
         {type !== "qa" && (
         <div>
@@ -2321,10 +2331,11 @@ export default function StationEditorPage() {
             </button>
           </div>
         </div>
-      </div>
+        </div>{/* /right panel */}
+      </div>{/* /lg:grid */}
 
-      {/* Keyboard shortcut hint footer */}
-      <div className="fixed bottom-0 left-1/2 z-20 w-full max-w-[440px] -translate-x-1/2 backdrop-blur-xl bg-background/70 border-t border-border/40 safe-bottom">
+      {/* Keyboard shortcut hint footer — mobile only (desktop has scrollable panels) */}
+      <div className="fixed bottom-0 left-1/2 z-20 w-full max-w-[440px] -translate-x-1/2 backdrop-blur-xl bg-background/70 border-t border-border/40 safe-bottom lg:hidden">
         <div className="mx-auto max-w-2xl px-5 py-2 text-center text-caption text-muted-foreground">
           Tab: indent · Shift+Tab: outdent · Enter: new item
         </div>

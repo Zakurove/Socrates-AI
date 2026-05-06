@@ -31,7 +31,7 @@ export default function MockExamsPage() {
   return (
     <div className="min-h-screen pb-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom)+1.5rem)]">
       <div className="safe-top" />
-      <div className="mx-auto max-w-3xl px-5 pt-6 space-y-6">
+      <div className="mx-auto max-w-3xl lg:max-w-5xl px-5 pt-6 space-y-6">
         <div>
           <h1 className="text-h1 text-foreground">Mock exams</h1>
           <p className="mt-1 text-caption text-muted-foreground">
@@ -63,15 +63,17 @@ export default function MockExamsPage() {
           </div>
         ) : (
           <>
-            <Button
-              onClick={() => navigate("/mock-exam/new")}
-              className="w-full rounded-full h-12 text-[17px] font-semibold tracking-tight gap-2"
-            >
-              <Plus className="h-4 w-4" />
-              New mock exam
-            </Button>
+            <div className="lg:flex lg:justify-start">
+              <Button
+                onClick={() => navigate("/mock-exam/new")}
+                className="w-full lg:w-auto rounded-full h-12 px-6 text-[17px] font-semibold tracking-tight gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                New mock exam
+              </Button>
+            </div>
 
-            <div className="space-y-3">
+            <div className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3">
               {data!.map((m) => {
                 const count = Array.isArray(m.stationIds)
                   ? (m.stationIds as number[]).length

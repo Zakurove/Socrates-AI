@@ -148,8 +148,9 @@ export default function ProgressPage() {
 
   return (
     <div className="min-h-screen pb-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom)+1.5rem)]">
-      <PageHeader title="Progress" backTo="/home" />
-      <div className="mx-auto max-w-2xl px-5 pt-6 space-y-6">
+      <PageHeader title="Progress" backTo="/home" className="lg:hidden" />
+      <div className="mx-auto max-w-2xl lg:max-w-3xl px-5 pt-6 space-y-6">
+        <h1 className="hidden lg:block text-h1 text-foreground">Progress</h1>
 
         {isLoading && (
           <div className="flex items-center justify-center py-20">

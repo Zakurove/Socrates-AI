@@ -206,7 +206,7 @@ export default function MockExamNewPage() {
         </div>
       </div>
 
-      <div className="px-5 pt-6 space-y-6 flex-1">
+      <div className="px-5 pt-6 space-y-6 flex-1 w-full lg:max-w-2xl lg:mx-auto">
         {/* STEP 1: stations */}
         {step === 1 && (
           <div className="space-y-4">

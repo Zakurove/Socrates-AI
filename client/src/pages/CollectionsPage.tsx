@@ -60,7 +60,7 @@ export default function CollectionsPage() {
         </div>
 
         <Tabs defaultValue="mine" className="w-full">
-          <TabsList className="w-full">
+          <TabsList className="w-full lg:max-w-sm">
             <TabsTrigger value="mine" className="flex-1">
               Mine
             </TabsTrigger>
@@ -105,7 +105,7 @@ export default function CollectionsPage() {
 
 function Grid({ collections }: { collections: CollectionWithMembership[] }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {collections.map((c) => (
         <CollectionCard
           key={c.id}
@@ -127,7 +127,7 @@ function Grid({ collections }: { collections: CollectionWithMembership[] }) {
 
 function SkeletonGrid() {
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       {Array.from({ length: 4 }).map((_, i) => (
         <CollectionCardSkeleton key={i} />
       ))}

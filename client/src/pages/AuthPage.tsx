@@ -12,6 +12,7 @@ import { usePrefs } from "@/hooks/use-prefs";
 import { motion } from "framer-motion";
 import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
+import { AuthPanelLayout } from "@/components/AuthPanelLayout";
 
 /**
  * Map a mutation error to a user-friendly message for the auth forms.
@@ -57,6 +58,11 @@ export default function AuthPage() {
 
   useEffect(() => {
     if (user) {
+      // If the user just registered, RegisterForm set a sessionStorage flag and
+      // already called navigate("/auth/verify-email"). Don't override it here.
+      if (sessionStorage.getItem("socrates_just_registered")) {
+        return;
+      }
       const params = new URLSearchParams(window.location.search);
       const from = params.get("from");
       const safeFrom =
@@ -70,22 +76,31 @@ export default function AuthPage() {
   if (user) return null;
 
   return (
-    <div className="auth-bg fixed inset-0 overflow-y-auto">
+    <AuthPanelLayout>
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: [0.32, 0.72, 0, 1] }}
-        className="relative max-w-sm mx-auto px-5 pt-16 pb-10 flex flex-col items-center"
+        className="relative max-w-sm mx-auto px-5 pt-16 pb-10 flex flex-col items-center lg:pt-10 lg:pb-10"
       >
-        <img src={logoSrc} alt="Socrates AI" className="h-[72px] w-auto" />
-        <h1 className="mt-5 text-h1 text-foreground text-center">
-          Socrates AI
-        </h1>
-        <p className="mt-2 text-body text-muted-foreground text-center max-w-xs">
-          Practice OSCEs with a patient who listens.
-        </p>
+        <div className="lg:hidden flex flex-col items-center">
+          <img src={logoSrc} alt="Socrates AI" className="h-[72px] w-auto" />
+          <h1 className="mt-5 text-h1 text-foreground text-center">
+            Socrates AI
+          </h1>
+          <p className="mt-2 text-body text-muted-foreground text-center max-w-xs">
+            Practice OSCEs with a patient who listens.
+          </p>
+        </div>
 
-        <div className="w-full mt-8">
+        <div className="hidden lg:block w-full">
+          <h1 className="text-h1 text-foreground">Welcome</h1>
+          <p className="mt-1 text-body text-muted-foreground">
+            Sign in or create an account to continue.
+          </p>
+        </div>
+
+        <div className="w-full mt-8 lg:mt-6">
           <SegmentedTabs view={view} onChange={setView} />
 
           <div className="mt-6">
@@ -96,12 +111,12 @@ export default function AuthPage() {
             )}
           </div>
 
-          <p className="text-caption text-muted-foreground mt-8 text-center">
+          <p className="text-caption text-muted-foreground mt-8 text-center lg:text-left">
             By continuing you agree to our Terms &amp; Privacy.
           </p>
         </div>
       </motion.div>
-    </div>
+    </AuthPanelLayout>
   );
 }
 
@@ -232,6 +247,7 @@ function LoginForm({ isPending }: { isPending: boolean }) {
 
 function RegisterForm({ isPending }: { isPending: boolean }) {
   const { register: registerAccount } = useAuth();
+  const [, navigate] = useLocation();
   const { toast } = useToast();
   const {
     register,
@@ -246,7 +262,13 @@ function RegisterForm({ isPending }: { isPending: boolean }) {
   const onSubmit = async (data: RegisterFormT) => {
     setServerMsg(null);
     try {
-      await registerAccount(data);
+      const result = await registerAccount(data);
+      if (!result.pending) {
+        // New registration: show the "check your inbox" page.
+        // Set a flag so AuthPage's useEffect doesn't override this navigation.
+        sessionStorage.setItem("socrates_just_registered", "1");
+        navigate("/auth/verify-email");
+      }
     } catch (err) {
       const message = friendlyAuthError(err, "register");
       setServerMsg(message);

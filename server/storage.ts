@@ -13,6 +13,7 @@ import {
   collectionMembers,
   collectionInvites,
   passwordResets,
+  emailVerifications,
   stationStars,
   collectionStars,
   reports,
@@ -78,6 +79,26 @@ export interface IStorage {
     userId: number,
     keepId: number,
   ): Promise<void>;
+
+  // Email verifications
+  createEmailVerification(data: {
+    userId: number;
+    token: string;
+    expiresAt: Date;
+  }): Promise<void>;
+  getEmailVerificationByToken(token: string): Promise<
+    | {
+        id: number;
+        userId: number;
+        token: string;
+        expiresAt: Date;
+        usedAt: Date | null;
+      }
+    | undefined
+  >;
+  markEmailVerificationUsed(id: number): Promise<void>;
+  invalidateOtherEmailVerifications(userId: number, keepId: number): Promise<void>;
+  markEmailVerified(userId: number): Promise<void>;
 
   // Stations
   getStations(userId: number): Promise<Station[]>;
@@ -437,6 +458,74 @@ class DatabaseStorage implements IStorage {
           isNull(passwordResets.usedAt),
         ),
       );
+  }
+
+  // ─── Email verifications ────────────────────────────────
+
+  async createEmailVerification(data: {
+    userId: number;
+    token: string;
+    expiresAt: Date;
+  }): Promise<void> {
+    await db.insert(emailVerifications).values({
+      userId: data.userId,
+      token: data.token,
+      expiresAt: data.expiresAt,
+    });
+  }
+
+  async getEmailVerificationByToken(token: string): Promise<
+    | {
+        id: number;
+        userId: number;
+        token: string;
+        expiresAt: Date;
+        usedAt: Date | null;
+      }
+    | undefined
+  > {
+    const [row] = await db
+      .select({
+        id: emailVerifications.id,
+        userId: emailVerifications.userId,
+        token: emailVerifications.token,
+        expiresAt: emailVerifications.expiresAt,
+        usedAt: emailVerifications.usedAt,
+      })
+      .from(emailVerifications)
+      .where(eq(emailVerifications.token, token))
+      .limit(1);
+    return row;
+  }
+
+  async markEmailVerificationUsed(id: number): Promise<void> {
+    await db
+      .update(emailVerifications)
+      .set({ usedAt: new Date() })
+      .where(eq(emailVerifications.id, id));
+  }
+
+  async invalidateOtherEmailVerifications(
+    userId: number,
+    keepId: number,
+  ): Promise<void> {
+    await db
+      .update(emailVerifications)
+      .set({ usedAt: new Date() })
+      .where(
+        and(
+          eq(emailVerifications.userId, userId),
+          sql`${emailVerifications.id} <> ${keepId}`,
+          isNull(emailVerifications.usedAt),
+        ),
+      );
+  }
+
+  async markEmailVerified(userId: number): Promise<void> {
+    await db
+      .update(users)
+      .set({ emailVerifiedAt: new Date(), updatedAt: new Date() })
+      .where(eq(users.id, userId));
   }
 
   // ─── Stations ───────────────────────────────────────────

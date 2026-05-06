@@ -116,6 +116,7 @@ export const users = pgTable("users", {
   displayName: varchar("display_name", { length: 100 }).notNull(),
   isAdmin: boolean("is_admin").notNull().default(false),
   bio: text("bio"),
+  emailVerifiedAt: timestamp("email_verified_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -500,6 +501,19 @@ export const passwordResets = pgTable("password_resets", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ============ EMAIL VERIFICATIONS ============
+
+export const emailVerifications = pgTable("email_verifications", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  token: text("token").notNull().unique(), // SHA-256 digest of the raw token
+  expiresAt: timestamp("expires_at").notNull(), // 24 h from creation
+  usedAt: timestamp("used_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // ============ REPORTS ============
 
 export const reports = pgTable("reports", {
@@ -798,6 +812,7 @@ export type CollectionInvite = typeof collectionInvites.$inferSelect;
 export type StationStar = typeof stationStars.$inferSelect;
 export type CollectionStar = typeof collectionStars.$inferSelect;
 export type Report = typeof reports.$inferSelect;
+export type EmailVerification = typeof emailVerifications.$inferSelect;
 
 export type Difficulty = "beginner" | "intermediate" | "advanced";
 

@@ -161,7 +161,7 @@ export default function HomePage() {
         variants={container}
         initial="hidden"
         animate="show"
-        className="space-y-8 px-5 pt-6"
+        className="space-y-8 px-5 pt-6 w-full lg:max-w-5xl lg:mx-auto"
       >
         {/* HomeHero */}
         <motion.header variants={item} className="space-y-1">
@@ -279,7 +279,8 @@ export default function HomePage() {
           <DraftsList />
         </motion.div>
 
-        {/* WorthRevisitingCards */}
+        {/* Worth revisiting + Community — side-by-side at lg+ */}
+        <div className="space-y-8 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-6">
         {worthRevisiting.length > 0 && (
           <motion.div variants={item} className="space-y-3">
             <h2 className="text-h2 text-foreground">
@@ -316,7 +317,13 @@ export default function HomePage() {
         )}
 
         {/* Community library preview */}
-        <motion.div variants={item} className="space-y-3">
+        <motion.div
+          variants={item}
+          className={cn(
+            "space-y-3",
+            worthRevisiting.length === 0 && "lg:col-span-2"
+          )}
+        >
           <div className="flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-h2 text-foreground">
               <Globe2 className="h-4 w-4 text-primary" />
@@ -378,6 +385,7 @@ export default function HomePage() {
             </div>
           )}
         </motion.div>
+        </div>
 
         {/* New station quick action */}
         <motion.div variants={item}>

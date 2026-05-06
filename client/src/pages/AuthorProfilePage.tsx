@@ -66,7 +66,7 @@ export default function AuthorProfilePage() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
-        <div className="mx-auto max-w-[960px] px-5 py-6 safe-top">
+        <div className="mx-auto w-full lg:max-w-3xl px-5 py-6 safe-top">
           <div className="mb-4 h-4 w-24 animate-pulse rounded bg-warm-100" />
           <div className="mb-4 flex items-center gap-4">
             <div className="h-16 w-16 animate-pulse rounded-full bg-warm-100" />
@@ -117,7 +117,7 @@ export default function AuthorProfilePage() {
         }
       />
 
-      <main className="mx-auto max-w-[960px] px-5 pt-6">
+      <main className="mx-auto w-full lg:max-w-3xl px-5 pt-6">
         <header className="mb-6">
           <div className="mb-4 flex items-center gap-4">
             <Avatar className="h-16 w-16">

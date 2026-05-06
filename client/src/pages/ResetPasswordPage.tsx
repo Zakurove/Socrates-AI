@@ -10,6 +10,7 @@ import { Loader2, AlertCircle, CheckCircle2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { motion } from "framer-motion";
 import { usePrefs } from "@/hooks/use-prefs";
+import { AuthPanelLayout } from "@/components/AuthPanelLayout";
 
 const resetSchema = z
   .object({
@@ -67,22 +68,31 @@ export default function ResetPasswordPage() {
   };
 
   return (
-    <div className="auth-bg fixed inset-0 overflow-y-auto">
+    <AuthPanelLayout>
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: [0.32, 0.72, 0, 1] }}
-        className="relative max-w-sm mx-auto px-5 pt-16 pb-10 flex flex-col items-center"
+        className="relative max-w-sm mx-auto px-5 pt-16 pb-10 flex flex-col items-center lg:pt-10 lg:pb-10"
       >
-        <img src={logoSrc} alt="Socrates AI" className="h-[72px] w-auto" />
-        <h1 className="mt-5 text-h1 text-foreground text-center">
-          Choose a new password
-        </h1>
-        <p className="mt-2 text-body text-muted-foreground text-center max-w-xs">
-          At least 10 characters. You'll be signed out of other sessions.
-        </p>
+        <div className="lg:hidden flex flex-col items-center">
+          <img src={logoSrc} alt="Socrates AI" className="h-[72px] w-auto" />
+          <h1 className="mt-5 text-h1 text-foreground text-center">
+            Choose a new password
+          </h1>
+          <p className="mt-2 text-body text-muted-foreground text-center max-w-xs">
+            At least 10 characters. You'll be signed out of other sessions.
+          </p>
+        </div>
 
-        <div className="w-full mt-8">
+        <div className="hidden lg:block w-full">
+          <h1 className="text-h1 text-foreground">Choose a new password</h1>
+          <p className="mt-1 text-body text-muted-foreground">
+            At least 10 characters. You'll be signed out of other sessions.
+          </p>
+        </div>
+
+        <div className="w-full mt-8 lg:mt-6">
           {done ? (
             <div className="flex items-start gap-3 rounded-card bg-muted/60 p-4">
               <CheckCircle2 className="h-5 w-5 shrink-0 text-primary mt-[1px]" />
@@ -166,6 +176,6 @@ export default function ResetPasswordPage() {
           )}
         </div>
       </motion.div>
-    </div>
+    </AuthPanelLayout>
   );
 }

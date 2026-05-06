@@ -159,7 +159,7 @@ export default function ResultsPage() {
   const dash = (Math.max(0, Math.min(100, score)) / 100) * circumference;
 
   const modeLabelMap: Record<string, string> = {
-    self_check: "Self-check",
+    self_check: "Self-ck",
     ai_history: "AI history",
     ai_observer: "AI observer",
     ai_communication: "AI comm.",
@@ -316,7 +316,7 @@ export default function ResultsPage() {
             </div>
             <div className="rounded-2xl bg-card border border-border/60 p-4 text-center">
               <p className="text-caption text-muted-foreground">Mode</p>
-              <p className="mt-1 text-h3 text-foreground capitalize">
+              <p className="mt-1 text-h3 text-foreground capitalize whitespace-nowrap">
                 {modeLabel}
               </p>
             </div>

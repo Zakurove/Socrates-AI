@@ -85,13 +85,13 @@ export default function MyStationsPage() {
     <div className="min-h-screen pb-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom)+1.5rem)]">
       <div className="safe-top" />
 
-      <div className="mx-auto max-w-3xl px-5 pt-6 space-y-6">
+      <div className="mx-auto max-w-3xl lg:max-w-5xl px-5 pt-6 space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-h1 text-foreground">My Stations</h1>
         </div>
 
         {/* Search */}
-        <div className="relative">
+        <div className="relative lg:max-w-xl">
           <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="search"
@@ -189,7 +189,7 @@ export default function MyStationsPage() {
         )}
 
         {filtered.length > 0 && (
-          <div className="rounded-2xl bg-card border border-border/60 shadow-card divide-y divide-border/60 overflow-hidden">
+          <div className="row-list-responsive">
             {filtered.map((station) => (
               <StationRow key={station.id} station={station} />
             ))}
@@ -197,10 +197,12 @@ export default function MyStationsPage() {
         )}
       </div>
 
-      {/* Extended FAB */}
+      {/* Extended FAB.
+          <lg: anchored to the right edge of the centered phone-frame (50vw - half-frame + gutter).
+          lg+: anchored to the right edge of the viewport (page main is flex-1 right of SideNav). */}
       <Button
         onClick={() => navigate("/station/new")}
-        className="fixed bottom-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom)+1rem)] right-[max(1rem,calc(50vw-220px+1rem))] z-30 h-14 gap-2 rounded-full px-5 shadow-lg"
+        className="fixed bottom-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom)+1rem)] right-[max(1rem,calc(50vw-220px+1rem))] z-30 h-14 gap-2 rounded-full px-5 shadow-lg lg:right-6 lg:bottom-6"
         aria-label="New station"
       >
         <Plus className="h-5 w-5" />

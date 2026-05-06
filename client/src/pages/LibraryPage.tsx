@@ -93,7 +93,7 @@ export default function LibraryPage() {
   return (
     <div className="min-h-screen pb-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom)+1.5rem)]">
       <div className="safe-top" />
-      <div className="mx-auto max-w-3xl px-5 pt-6 space-y-6">
+      <div className="mx-auto max-w-3xl lg:max-w-5xl px-5 pt-6 space-y-6">
         <div>
           <h1 className="text-h1 text-foreground">Library</h1>
           <p className="mt-1 text-caption text-muted-foreground">
@@ -101,7 +101,7 @@ export default function LibraryPage() {
           </p>
         </div>
 
-        <LibrarySearchBar value={q} onChange={(v) => update({ q: v })} />
+        <LibrarySearchBar value={q} onChange={(v) => update({ q: v })} className="lg:max-w-xl" />
 
         <LibraryFilters
           value={{ type, specialty, difficulty, sort }}
@@ -226,7 +226,7 @@ function ResultsList({
       </div>
 
       {isLoading ? (
-        <div className="rounded-2xl bg-card border border-border/60 shadow-card divide-y divide-border/60 overflow-hidden">
+        <div className="row-list-responsive">
           {Array.from({ length: 6 }).map((_, i) => (
             <PublicStationRowSkeleton key={i} />
           ))}
@@ -236,7 +236,7 @@ function ResultsList({
       ) : items.length === 0 ? (
         <EmptyResults />
       ) : (
-        <div className="rounded-2xl bg-card border border-border/60 shadow-card divide-y divide-border/60 overflow-hidden">
+        <div className="row-list-responsive">
           {items.map((s) => (
             <PublicStationRow key={s.id} station={s} />
           ))}
@@ -254,16 +254,12 @@ function FeaturedCarousel({ items }: { items: PublicStationSummary[] }) {
         Featured
       </h2>
       <div
-        className="-mx-5 flex snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-2 no-scrollbar"
-        style={{
-          maskImage: "linear-gradient(to right, black 92%, transparent)",
-          WebkitMaskImage: "linear-gradient(to right, black 92%, transparent)",
-        }}
+        className="-mx-5 flex snap-x snap-mandatory gap-3 overflow-x-auto px-5 pb-2 no-scrollbar lg:mx-0 lg:px-0 lg:pb-0 lg:grid lg:grid-cols-4 lg:overflow-x-visible lg:snap-none"
       >
         {items.map((s) => (
           <div
             key={s.id}
-            className="w-[260px] shrink-0 snap-start"
+            className="w-[260px] shrink-0 snap-start lg:w-full"
           >
             <PublicStationCard station={s} />
           </div>
@@ -309,7 +305,7 @@ function ListSection({
           {icon}
           {title}
         </h2>
-        <div className="rounded-2xl bg-card border border-border/60 shadow-card divide-y divide-border/60 overflow-hidden">
+        <div className="row-list-responsive">
           {Array.from({ length: 4 }).map((_, i) => (
             <PublicStationRowSkeleton key={i} />
           ))}
@@ -324,7 +320,7 @@ function ListSection({
         {icon}
         {title}
       </h2>
-      <div className="rounded-2xl bg-card border border-border/60 shadow-card divide-y divide-border/60 overflow-hidden">
+      <div className="row-list-responsive">
         {items.slice(0, 6).map((s) => (
           <PublicStationRow key={s.id} station={s} />
         ))}

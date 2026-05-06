@@ -250,7 +250,7 @@ export default function MockExamDetailPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      <div className="px-5 pt-6 space-y-8">
+      <div className="px-5 pt-6 space-y-8 lg:max-w-2xl lg:mx-auto">
         {/* Hero */}
         <header className="space-y-1">
           <p className="text-label text-muted-foreground uppercase">

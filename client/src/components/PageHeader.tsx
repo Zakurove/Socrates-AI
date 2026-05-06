@@ -28,7 +28,14 @@ export interface PageHeaderProps {
   onRightPress?: () => void;
   /** For modal variant: disable the primary right-side button. */
   rightDisabled?: boolean;
-  /** Use the wider 960px inner container (library, admin, profile). */
+  /**
+   * Use the wider 960px inner container.
+   *
+   * @deprecated Only `/admin/reports` still uses this. All other pages should
+   * rely on the `AppShell` layout (SideNav + flex-1 content) at `lg+` instead
+   * of a hard `max-w-[960px]` cap. Do not add new usages. Remove once the
+   * admin page is reworked.
+   */
   wide?: boolean;
   /** Extra class names for the outer header element. */
   className?: string;

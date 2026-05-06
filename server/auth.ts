@@ -37,6 +37,7 @@ declare global {
       displayName: string;
       isAdmin: boolean;
       bio: string | null;
+      emailVerifiedAt: Date | null;
       createdAt: Date;
       updatedAt: Date;
     }

@@ -5,7 +5,7 @@ import { randomBytes, createHash, timingSafeEqual } from "crypto";
 import { hashPassword, comparePassword, sanitizeUser } from "../auth.js";
 import { storage } from "../storage.js";
 import { authLimiter } from "../middleware/rate-limit.js";
-import { sendPasswordResetEmail } from "../services/email.js";
+import { sendPasswordResetEmail, sendVerificationEmail } from "../services/email.js";
 
 const router = Router();
 
@@ -57,6 +57,23 @@ router.post("/register", authLimiter, async (req, res, next) => {
     // Admins are promoted by explicit SQL only. Do NOT auto-promote on
     // registration — if the DB is ever reset, first-register-wins would
     // grant admin to whoever signs up with the founder email first.
+
+    // Generate + send verification email (best-effort — errors must not block
+    // registration or auto-login).
+    try {
+      const rawToken = randomBytes(32).toString("hex");
+      const digest = hashToken(rawToken);
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 h
+      await storage.createEmailVerification({
+        userId: user.id,
+        token: digest,
+        expiresAt,
+      });
+      await sendVerificationEmail({ to: user.email, token: rawToken });
+    } catch (emailErr) {
+      // Non-fatal: log and continue. User can resend from the banner.
+      console.error("[auth] verification email failed on register", emailErr);
+    }
 
     // Auto-login after registration — regenerate session to prevent fixation.
     const safeUser = sanitizeUser(user);
@@ -288,6 +305,95 @@ router.post("/reset-password", authLimiter, async (req, res, next) => {
     await storage.updateUser(record.userId, { password: hashed });
     await storage.markPasswordResetUsed(record.id);
     await storage.invalidateOtherPasswordResets(record.userId, record.id);
+
+    return res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Email verification ───────────────────────────────────
+//
+// Strategy mirrors password resets: raw token in email URL, SHA-256 digest
+// in DB. 24-hour expiry, single-use. Soft-gate: app is fully accessible to
+// unverified users; a banner prompts verification until the link is clicked.
+
+// POST /api/auth/verify-email/send — generate a fresh token and email it.
+// Auth required (user must be logged in to request a resend).
+router.post("/verify-email/send", authLimiter, async (req, res, next) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    if (req.user.emailVerifiedAt) {
+      return res.json({ ok: true, alreadyVerified: true });
+    }
+
+    const rawToken = randomBytes(32).toString("hex");
+    const digest = hashToken(rawToken);
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 h
+
+    await storage.createEmailVerification({
+      userId: req.user.id,
+      token: digest,
+      expiresAt,
+    });
+
+    await sendVerificationEmail({ to: req.user.email, token: rawToken });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/auth/verify-email/:token — consume the token, mark email verified.
+// No auth required — user clicks from their inbox.
+router.get("/verify-email/:token", async (req, res, next) => {
+  try {
+    const raw = req.params.token;
+    if (!raw || raw.length < 32 || raw.length > 128) {
+      return res.status(400).json({ message: "Invalid token" });
+    }
+
+    const digest = hashToken(raw);
+    const record = await storage.getEmailVerificationByToken(digest);
+
+    if (!record) {
+      return res.status(400).json({ message: "Invalid or expired link" });
+    }
+    if (record.usedAt) {
+      return res.status(400).json({ message: "This link has already been used" });
+    }
+    if (record.expiresAt.getTime() < Date.now()) {
+      return res.status(400).json({ message: "This link has expired" });
+    }
+
+    // Constant-time compare (defense in depth — query already matched on digest).
+    const a = Buffer.from(digest, "hex");
+    const b = Buffer.from(record.token, "hex");
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
+      return res.status(400).json({ message: "Invalid link" });
+    }
+
+    await storage.markEmailVerified(record.userId);
+    await storage.markEmailVerificationUsed(record.id);
+    // Invalidate any other pending tokens for this user.
+    await storage.invalidateOtherEmailVerifications(record.userId, record.id);
+
+    // If the verifying user is currently logged in, refresh the session so
+    // the client's `emailVerifiedAt` field updates without a manual re-login.
+    if (req.isAuthenticated() && req.user.id === record.userId) {
+      const freshUser = await storage.getUser(record.userId);
+      if (freshUser) {
+        const safeUser = sanitizeUser(freshUser);
+        req.login(safeUser, (loginErr) => {
+          if (loginErr) {
+            console.error("[auth] session refresh after verify failed", loginErr);
+          }
+        });
+      }
+    }
 
     return res.json({ ok: true });
   } catch (err) {
