@@ -1,23 +1,23 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import { Mail, CheckCircle2, Loader2 } from "lucide-react";
-import { motion } from "framer-motion";
+import { Mail, CheckCircle2, Loader2, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { AuthPanelLayout } from "@/components/AuthPanelLayout";
+import { AuthShell, AuthHero, StackedAuthCard } from "@/components/auth-shell";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
-import { usePrefs } from "@/hooks/use-prefs";
 
 /**
  * "Check your inbox" page shown immediately after registration.
- * Soft-gate — user can navigate away at any time.
- * Routes: /auth/verify-email
+ *
+ * Shares the AuthPage chrome — pure white surface, Owl glyph, hero
+ * typography, stacked auth card. Soft-gate: the user can dismiss with
+ * "I'll verify later" and continue using the app.
+ *
+ * Route: /auth/verify-email
  */
 export default function VerifyEmailPage() {
   const { user } = useAuth();
   const [, navigate] = useLocation();
-  const { resolvedTheme } = usePrefs();
-  const logoSrc = resolvedTheme === "dark" ? "/brand/logo-dark.png" : "/brand/logo.png";
 
   const [resendState, setResendState] = useState<"idle" | "pending" | "sent" | "error">("idle");
 
@@ -37,83 +37,83 @@ export default function VerifyEmailPage() {
   };
 
   return (
-    <AuthPanelLayout>
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: [0.32, 0.72, 0, 1] }}
-        className="relative max-w-sm mx-auto px-5 pt-16 pb-10 flex flex-col items-center lg:pt-10 lg:pb-10"
-      >
-        {/* Mobile: logo + title */}
-        <div className="lg:hidden flex flex-col items-center">
-          <img src={logoSrc} alt="Socrates AI" className="h-[72px] w-auto" />
-          <h1 className="mt-5 text-h1 text-foreground text-center">Check your inbox</h1>
-          <p className="mt-2 text-body text-muted-foreground text-center max-w-xs">
-            We sent a verification link to confirm your email address.
-          </p>
-        </div>
+    <AuthShell>
+      <main className="px-6 pb-14 flex flex-col items-center min-h-[calc(100vh-72px)] justify-center">
+        <AuthHero
+          eyebrow="One More Step"
+          headline="Check your inbox"
+        />
 
-        {/* Desktop: plain heading */}
-        <div className="hidden lg:block w-full">
-          <h1 className="text-h1 text-foreground">Check your inbox</h1>
-          <p className="mt-1 text-body text-muted-foreground">
-            We sent a verification link to confirm your email address.
-          </p>
-        </div>
+        <div className="relative z-10 w-full max-w-[460px]">
+          <StackedAuthCard>
+            <div className="space-y-6">
+              {/* Email-sent confirmation block */}
+              <div className="flex items-start gap-3 rounded-2xl bg-zinc-50 border border-zinc-100 p-4">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#F0E8FA] text-[#5A2E9A]">
+                  <Mail className="h-5 w-5" aria-hidden />
+                </div>
+                <div className="text-[13px] leading-relaxed text-zinc-700">
+                  We sent a verification link to{" "}
+                  <span className="font-semibold text-zinc-900">
+                    {user?.email ?? "your email address"}
+                  </span>
+                  . Open it from your inbox to confirm your account. The link
+                  expires in 24 hours.
+                </div>
+              </div>
 
-        <div className="w-full mt-8 lg:mt-6 space-y-5">
-          {/* Mail icon card */}
-          <div className="flex items-start gap-3 rounded-card bg-muted/60 p-4">
-            <Mail className="h-5 w-5 shrink-0 text-primary mt-[1px]" aria-hidden />
-            <div className="text-body text-foreground">
-              Verification email sent to{" "}
-              <span className="font-semibold">{user?.email ?? "your email address"}</span>.
-              Check your inbox — the link expires in 24 hours.
-            </div>
-          </div>
-
-          {/* Resend */}
-          {resendState === "sent" ? (
-            <div className="flex items-center gap-2 text-caption text-primary">
-              <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
-              <span>Resent! Check your inbox again.</span>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <Button
-                type="button"
-                variant="outline"
-                size="lg"
-                className="w-full"
-                disabled={resendState === "pending"}
-                onClick={handleResend}
-              >
-                {resendState === "pending" ? (
-                  <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
-                ) : (
-                  "Resend verification email"
-                )}
-              </Button>
-              {resendState === "error" && (
-                <p role="alert" className="text-caption text-warning text-center">
-                  Something went wrong. Please try again.
-                </p>
+              {/* Resend */}
+              {resendState === "sent" ? (
+                <div className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-50 border border-emerald-100 px-4 py-3 text-[13px] font-medium text-emerald-700">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
+                  <span>Resent — check your inbox again.</span>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    className="w-full"
+                    disabled={resendState === "pending"}
+                    onClick={handleResend}
+                  >
+                    {resendState === "pending" ? (
+                      <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+                    ) : (
+                      "Resend verification email"
+                    )}
+                  </Button>
+                  {resendState === "error" && (
+                    <p
+                      role="alert"
+                      className="text-[12px] text-amber-700 text-center"
+                    >
+                      Couldn't send — please try again.
+                    </p>
+                  )}
+                </div>
               )}
-            </div>
-          )}
 
-          {/* Skip */}
-          <div className="text-center">
-            <button
-              type="button"
-              onClick={() => navigate("/home")}
-              className="text-caption text-muted-foreground hover:text-foreground transition-smooth"
-            >
-              I'll verify later →
-            </button>
-          </div>
+              {/* Skip */}
+              <div className="pt-1 flex items-center justify-center">
+                <button
+                  type="button"
+                  onClick={() => navigate("/home")}
+                  className="inline-flex items-center gap-1 text-[13px] text-zinc-500 hover:text-zinc-900 transition-colors"
+                >
+                  I'll verify later
+                  <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </div>
+            </div>
+          </StackedAuthCard>
         </div>
-      </motion.div>
-    </AuthPanelLayout>
+
+        <p className="mt-12 lg:mt-16 text-[12px] tracking-wide text-zinc-400">
+          Trusted by trainees preparing for OSCE exams.
+        </p>
+      </main>
+    </AuthShell>
   );
 }
