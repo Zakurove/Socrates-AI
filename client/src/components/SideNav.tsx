@@ -96,13 +96,20 @@ export function SideNav() {
                   aria-current={isActive ? "page" : undefined}
                   title={collapsed ? item.label : undefined}
                   className={cn(
-                    "group flex w-full items-center rounded-xl py-2.5 text-[15px] font-semibold transition-smooth",
+                    "group relative flex w-full items-center rounded-xl py-2.5 text-[15px] font-semibold transition-smooth",
                     collapsed ? "justify-center px-0" : "gap-3 px-3",
                     isActive
-                      ? "bg-primary/10 text-primary"
+                      ? "bg-primary/[0.08] text-primary"
                       : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                   )}
                 >
+                  {/* Active left-edge accent bar (V70 brand echo) */}
+                  {isActive && !collapsed && (
+                    <span
+                      aria-hidden
+                      className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-primary"
+                    />
+                  )}
                   <Icon
                     className="h-[18px] w-[18px] shrink-0"
                     strokeWidth={isActive ? 2.25 : 2}

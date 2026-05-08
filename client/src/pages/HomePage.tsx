@@ -153,30 +153,57 @@ export default function HomePage() {
 
   // examDate intentionally omitted — not on user schema.
 
+  // Greeting without trailing comma — used as an eyebrow chip
+  const greetingShort = getGreeting().replace(/,\s*$/, "");
+
   return (
-    <div className="min-h-screen pb-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom)+1.5rem)]">
+    <div className="relative min-h-screen overflow-hidden pb-[calc(var(--bottom-nav-h)+env(safe-area-inset-bottom)+1.5rem)]">
+      {/* Subtle decorative Owl glyph — desktop only, V70 brand echo */}
+      <img
+        src="/brand/icon.png"
+        alt=""
+        aria-hidden
+        className="hidden lg:block absolute -bottom-20 -right-20 h-[420px] w-[420px] rotate-[-12deg] pointer-events-none opacity-[0.04]"
+      />
       <div className="safe-top" />
 
       <motion.div
         variants={container}
         initial="hidden"
         animate="show"
-        className="space-y-8 px-5 pt-6 w-full lg:max-w-5xl lg:mx-auto"
+        className="relative space-y-8 px-5 pt-6 w-full lg:max-w-5xl lg:mx-auto"
       >
         {/* HomeHero */}
-        <motion.header variants={item} className="space-y-1">
+        <motion.header variants={item} className="space-y-3">
           <img
             src={logoSrc}
             alt="Socrates"
             className="h-10 w-auto"
             draggable={false}
           />
-          <div className="pt-4">
-            <p className="text-caption text-muted-foreground">{getGreeting()}</p>
-            <h1 className="text-display text-foreground">
-              {firstName(user?.displayName)}.
-            </h1>
+
+          {/* V70-style pulse eyebrow with the contextual greeting */}
+          <div className="inline-flex items-center gap-2.5 pt-3">
+            <span aria-hidden className="relative inline-flex h-2 w-2">
+              <span className="absolute inset-0 rounded-full bg-[#E8A520] opacity-50 animate-ping" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-[#E8A520]" />
+            </span>
+            <span className="text-[11px] uppercase tracking-[0.3em] font-bold text-[#5A2E9A]">
+              {greetingShort}
+            </span>
           </div>
+
+          <h1 className="text-[clamp(36px,5.5vw,52px)] font-bold tracking-[-0.025em] leading-[0.98] text-foreground">
+            {firstName(user?.displayName)}.
+          </h1>
+
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[14px] tracking-tight pt-1">
+            <span className="font-semibold text-zinc-800 dark:text-zinc-200">Build</span>
+            <span aria-hidden className="text-zinc-300 dark:text-zinc-600 font-bold">·</span>
+            <span className="font-semibold text-zinc-800 dark:text-zinc-200">Practice</span>
+            <span aria-hidden className="text-zinc-300 dark:text-zinc-600 font-bold">·</span>
+            <span className="font-semibold text-zinc-800 dark:text-zinc-200">Learn</span>
+          </p>
 
           {/* Quick stats row */}
           {stats && (stats.sessionsThisWeek > 0 || stats.totalPracticeMinutes > 0) && (
