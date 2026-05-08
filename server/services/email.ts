@@ -27,55 +27,109 @@ function escapeHtml(input: string): string {
     .replace(/'/g, "&#39;");
 }
 
-// ─── Shared email shell ───────────────────────────────────────────────────────
-// All transactional emails share this outer chrome: background, centered card,
-// logo, title, content slot, divider, sign-off, and footer.
-// Pass `innerHtml` as everything that goes after the <h1> and before the <hr>.
+// ─── Shared email shell (V70 brand language) ─────────────────────────────────
+// All transactional emails share this outer chrome:
+//   • brand header (logo + "Socrates AI" wordmark)
+//   • V70 hero (purple uppercase eyebrow + bold display headline)
+//   • content slot
+//   • Build · Practice · Learn motto strip
+//   • sign-off + footer
+// Email-client constraints: tables only, inline CSS, no animations / blur,
+// absolute logo URL.
 
 function renderEmailShell(params: {
-  title: string;
+  eyebrow: string;
+  headline: string;
   innerHtml: string;
+  preheader?: string;
 }): string {
   const logoUrl = `${appUrl}/brand/icon.png`;
   const year = new Date().getFullYear();
+  const preheader = params.preheader
+    ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#ffffff;opacity:0;">${escapeHtml(params.preheader)}</div>`
+    : "";
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light only" />
+    <meta name="supported-color-schemes" content="light only" />
   </head>
-  <body style="margin:0;padding:0;background-color:#f7f5fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1a1a1a;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+  <body style="margin:0;padding:0;background-color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#0F0520;">
+    ${preheader}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;">
       <tr>
-        <td align="center" style="padding:40px 16px;">
-          <table role="presentation" width="480" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+        <td align="center" style="padding:32px 16px 40px 16px;">
+          <table role="presentation" width="520" cellpadding="0" cellspacing="0" border="0" style="width:520px;max-width:100%;background-color:#ffffff;">
 
-            <!-- Logo header -->
+            <!-- Brand header: logo + wordmark -->
             <tr>
-              <td align="center" style="padding:28px 32px 0 32px;">
-                <img src="${logoUrl}" width="40" height="40" alt="Socrates AI" style="display:block;border:0;" />
+              <td style="padding:0 8px 28px 8px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td valign="middle" style="padding-right:10px;">
+                      <img src="${logoUrl}" width="32" height="32" alt="" style="display:block;border:0;border-radius:8px;" />
+                    </td>
+                    <td valign="middle" style="font-size:15px;font-weight:700;letter-spacing:-0.01em;color:#0F0520;">
+                      Socrates AI
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
 
-            <!-- Card content -->
+            <!-- Card -->
             <tr>
-              <td style="padding:20px 32px 28px 32px;">
-                <h1 style="margin:0 0 16px 0;font-size:20px;line-height:1.4;font-weight:600;color:#1a1a1a;">
-                  ${params.title}
-                </h1>
-                ${params.innerHtml}
-                <hr style="border:none;border-top:1px solid #eee;margin:24px 0" />
-                <p style="margin:0 0 4px 0;font-size:14px;line-height:1.5;color:#4a4a4a;">
-                  — The Socrates AI team
-                </p>
+              <td style="background-color:#ffffff;border:1px solid #ECE6F4;border-radius:20px;box-shadow:0 25px 60px -20px rgba(45,17,82,0.12);">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+
+                  <!-- Hero -->
+                  <tr>
+                    <td style="padding:36px 36px 8px 36px;">
+                      <p style="margin:0 0 12px 0;font-size:11px;line-height:1;font-weight:700;letter-spacing:0.28em;text-transform:uppercase;color:#5A2E9A;">
+                        ${escapeHtml(params.eyebrow)}
+                      </p>
+                      <h1 style="margin:0 0 4px 0;font-size:30px;line-height:1.1;font-weight:700;letter-spacing:-0.02em;color:#0F0520;">
+                        ${escapeHtml(params.headline)}
+                      </h1>
+                    </td>
+                  </tr>
+
+                  <!-- Content -->
+                  <tr>
+                    <td style="padding:20px 36px 8px 36px;">
+                      ${params.innerHtml}
+                    </td>
+                  </tr>
+
+                  <!-- Motto strip -->
+                  <tr>
+                    <td style="padding:8px 36px 28px 36px;">
+                      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                        <tr>
+                          <td style="border-top:1px solid #ECE6F4;padding-top:18px;">
+                            <p style="margin:0;font-size:11px;line-height:1;font-weight:700;letter-spacing:0.24em;text-transform:uppercase;color:#9A8AB8;text-align:center;">
+                              Build &middot; Practice &middot; Learn
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+
+                </table>
               </td>
             </tr>
 
             <!-- Footer -->
             <tr>
-              <td align="center" style="padding:0 32px 24px 32px;">
-                <p style="margin:0;font-size:12px;line-height:1.5;color:#9a9a9a;text-align:center;">
-                  &copy; ${year} Socrates AI
+              <td style="padding:24px 8px 0 8px;">
+                <p style="margin:0 0 4px 0;font-size:13px;line-height:1.5;color:#6B5E84;">
+                  &mdash; The Socrates AI team
+                </p>
+                <p style="margin:0;font-size:12px;line-height:1.5;color:#9A8AB8;">
+                  &copy; ${year} Socrates AI &middot; OSCE practice partner
                 </p>
               </td>
             </tr>
@@ -91,38 +145,40 @@ function renderEmailShell(params: {
 // ─── CTA button snippet (reused across emails) ────────────────────────────────
 
 function renderCtaButton(url: string, label: string): string {
-  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px 0;">
-                  <tr>
-                    <td style="background-color:#5A2E9A;border-radius:8px;">
-                      <a href="${url}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;line-height:1.2;">
-                        ${label}
-                      </a>
-                    </td>
-                  </tr>
-                </table>`;
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 24px 0;">
+                        <tr>
+                          <td style="background-color:#5A2E9A;border-radius:12px;box-shadow:0 8px 20px -8px rgba(90,46,154,0.45);">
+                            <a href="${url}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:700;letter-spacing:-0.01em;color:#ffffff;text-decoration:none;line-height:1.2;border-radius:12px;">
+                              ${label} &nbsp;&rarr;
+                            </a>
+                          </td>
+                        </tr>
+                      </table>`;
 }
 
 // ─── Password reset email ─────────────────────────────────────────────────────
 
 function renderResetHtml(resetUrl: string): string {
   const inner = `
-                <p style="margin:0 0 20px 0;font-size:15px;line-height:1.6;color:#4a4a4a;">
-                  Hi there,
-                </p>
-                <p style="margin:0 0 24px 0;font-size:15px;line-height:1.6;color:#4a4a4a;">
-                  We received a request to reset the password on your Socrates AI account. Click the button below to choose a new password &mdash; this link expires in 1 hour.
-                </p>
-                ${renderCtaButton(resetUrl, "Reset my password")}
-                <p style="margin:0 0 8px 0;font-size:13px;line-height:1.5;color:#6a6a6a;">
-                  Or paste this link into your browser:
-                </p>
-                <p style="margin:0 0 24px 0;font-size:13px;line-height:1.5;color:#5A2E9A;word-break:break-all;">
-                  ${resetUrl}
-                </p>
-                <p style="margin:0;font-size:12px;line-height:1.5;color:#9a9a9a;">
-                  If you didn&rsquo;t request this, you can safely ignore this email. Your password hasn&rsquo;t changed.
-                </p>`;
-  return renderEmailShell({ title: "Reset your Socrates AI password", innerHtml: inner });
+                      <p style="margin:0 0 20px 0;font-size:15px;line-height:1.65;color:#3D2E5A;">
+                        We received a request to reset the password on your Socrates AI account. Choose a new one with the button below &mdash; this link expires in <strong style="color:#0F0520;">1 hour</strong>.
+                      </p>
+                      ${renderCtaButton(resetUrl, "Reset my password")}
+                      <p style="margin:0 0 6px 0;font-size:12px;line-height:1.5;color:#6B5E84;">
+                        Or paste this link into your browser:
+                      </p>
+                      <p style="margin:0 0 20px 0;font-size:12px;line-height:1.5;color:#5A2E9A;word-break:break-all;">
+                        ${resetUrl}
+                      </p>
+                      <p style="margin:0 0 4px 0;font-size:12px;line-height:1.55;color:#9A8AB8;">
+                        Didn&rsquo;t request this? You can safely ignore this email &mdash; your password hasn&rsquo;t changed.
+                      </p>`;
+  return renderEmailShell({
+    eyebrow: "Account Recovery",
+    headline: "Choose a new password",
+    innerHtml: inner,
+    preheader: "Reset your Socrates AI password — link expires in 1 hour.",
+  });
 }
 
 function renderResetText(resetUrl: string): string {
@@ -146,20 +202,28 @@ Your password hasn't changed.
 
 function renderVerifyHtml(verifyUrl: string): string {
   const inner = `
-                <p style="margin:0 0 24px 0;font-size:15px;line-height:1.6;color:#4a4a4a;">
-                  Thanks for joining Socrates AI. Click the button below to verify your email &mdash; this keeps your account secure and ensures you receive important updates.
-                </p>
-                ${renderCtaButton(verifyUrl, "Confirm my email")}
-                <p style="margin:0 0 8px 0;font-size:13px;line-height:1.5;color:#6a6a6a;">
-                  Or paste this link into your browser:
-                </p>
-                <p style="margin:0 0 24px 0;font-size:13px;line-height:1.5;color:#5A2E9A;word-break:break-all;">
-                  ${verifyUrl}
-                </p>
-                <p style="margin:0;font-size:12px;line-height:1.5;color:#9a9a9a;">
-                  This link expires in 24 hours. If you didn&rsquo;t create a Socrates AI account, you can safely ignore this email.
-                </p>`;
-  return renderEmailShell({ title: "Confirm your email address", innerHtml: inner });
+                      <p style="margin:0 0 16px 0;font-size:15px;line-height:1.65;color:#3D2E5A;">
+                        Welcome to Socrates AI &mdash; your OSCE practice partner. Confirm this is really you and we&rsquo;ll get you straight into your stations.
+                      </p>
+                      <p style="margin:0 0 8px 0;font-size:15px;line-height:1.65;color:#3D2E5A;">
+                        Tap the button below to confirm your email. This link expires in <strong style="color:#0F0520;">24 hours</strong>.
+                      </p>
+                      ${renderCtaButton(verifyUrl, "Confirm my email")}
+                      <p style="margin:0 0 6px 0;font-size:12px;line-height:1.5;color:#6B5E84;">
+                        Or paste this link into your browser:
+                      </p>
+                      <p style="margin:0 0 20px 0;font-size:12px;line-height:1.5;color:#5A2E9A;word-break:break-all;">
+                        ${verifyUrl}
+                      </p>
+                      <p style="margin:0 0 4px 0;font-size:12px;line-height:1.55;color:#9A8AB8;">
+                        Didn&rsquo;t create a Socrates AI account? You can safely ignore this email.
+                      </p>`;
+  return renderEmailShell({
+    eyebrow: "One More Step",
+    headline: "Welcome — confirm your email",
+    innerHtml: inner,
+    preheader: "Confirm your email and start practicing OSCEs with Socrates AI.",
+  });
 }
 
 function renderVerifyText(verifyUrl: string): string {
@@ -187,23 +251,38 @@ function renderInviteHtml(
   const safeName = escapeHtml(params.inviterName);
   const safeRole = escapeHtml(params.role);
   const inner = `
-                <p style="margin:0 0 24px 0;font-size:15px;line-height:1.6;color:#4a4a4a;">
-                  <strong>${safeName}</strong> invited you to join
-                  <strong>&ldquo;${safeTitle}&rdquo;</strong> on Socrates AI as
-                  a <strong>${safeRole}</strong>.
-                </p>
-                ${renderCtaButton(inviteUrl, "Accept invite")}
-                <p style="margin:0 0 8px 0;font-size:13px;line-height:1.5;color:#6a6a6a;">
-                  Or paste this link into your browser:
-                </p>
-                <p style="margin:0 0 24px 0;font-size:13px;line-height:1.5;color:#5A2E9A;word-break:break-all;">
-                  ${inviteUrl}
-                </p>
-                <p style="margin:0;font-size:12px;line-height:1.5;color:#9a9a9a;">
-                  This invite expires in 7 days. If you didn&rsquo;t expect this,
-                  you can safely ignore this email.
-                </p>`;
-  return renderEmailShell({ title: "You've been invited to a collection", innerHtml: inner });
+                      <p style="margin:0 0 18px 0;font-size:15px;line-height:1.65;color:#3D2E5A;">
+                        <strong style="color:#0F0520;">${safeName}</strong> invited you to join
+                        <strong style="color:#0F0520;">&ldquo;${safeTitle}&rdquo;</strong> on Socrates AI.
+                      </p>
+                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;background-color:#F7F3FB;border:1px solid #ECE6F4;border-radius:14px;">
+                        <tr>
+                          <td style="padding:14px 18px;">
+                            <p style="margin:0 0 4px 0;font-size:11px;line-height:1;font-weight:700;letter-spacing:0.24em;text-transform:uppercase;color:#5A2E9A;">
+                              Joining as
+                            </p>
+                            <p style="margin:0;font-size:15px;line-height:1.4;font-weight:700;color:#0F0520;text-transform:capitalize;">
+                              ${safeRole}
+                            </p>
+                          </td>
+                        </tr>
+                      </table>
+                      ${renderCtaButton(inviteUrl, "Accept invite")}
+                      <p style="margin:0 0 6px 0;font-size:12px;line-height:1.5;color:#6B5E84;">
+                        Or paste this link into your browser:
+                      </p>
+                      <p style="margin:0 0 20px 0;font-size:12px;line-height:1.5;color:#5A2E9A;word-break:break-all;">
+                        ${inviteUrl}
+                      </p>
+                      <p style="margin:0 0 4px 0;font-size:12px;line-height:1.55;color:#9A8AB8;">
+                        This invite expires in 7 days. If you weren&rsquo;t expecting it, you can safely ignore this email.
+                      </p>`;
+  return renderEmailShell({
+    eyebrow: "Collection Invite",
+    headline: `Join "${params.collectionTitle}"`,
+    innerHtml: inner,
+    preheader: `${params.inviterName} invited you to a Socrates AI collection.`,
+  });
 }
 
 function renderInviteText(
