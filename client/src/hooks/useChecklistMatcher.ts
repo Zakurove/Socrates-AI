@@ -8,6 +8,11 @@ interface ItemResult {
    * leaf, always false. Derived client-side from the monotonic leaf state.
    */
   partial: boolean;
+  /**
+   * Verbatim span from the transcript that the LLM cited as the match.
+   * Captured per leaf for audit; absent on parents (they're derived).
+   */
+  match?: string;
 }
 
 /**
@@ -48,6 +53,7 @@ interface CheckResponseItem {
   covered: boolean;
   confidence: number;
   partial?: boolean;
+  match?: string;
 }
 
 interface CheckResponse {
@@ -183,12 +189,14 @@ export function useChecklistMatcher(): UseChecklistMatcherReturn {
                 covered: true,
                 confidence: Math.max(existing.confidence, item.confidence),
                 partial: false,
+                match: existing.match || item.match,
               });
             } else {
               next.set(item.id, {
                 covered: item.covered,
                 confidence: item.confidence,
                 partial: false,
+                match: item.match,
               });
             }
           }

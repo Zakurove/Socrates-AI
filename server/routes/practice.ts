@@ -391,9 +391,15 @@ GRADING PRINCIPLES — read carefully.
 
 6) ONE LINE CAN COVER MULTIPLE ITEMS. A single sentence may match several leaves (e.g., "Inspect for swelling, deformity, and skin changes" satisfies three separate inspection items).
 
-7) ERR ON THE SIDE OF COVERED. If the transcript plausibly addresses the item under rules 1–4, return covered=true. A missed positive is worse than a charitable positive — the student wants real-time progress feedback.
+7) ERR ON THE SIDE OF COVERED — for general history / inspection / palpation actions. If the transcript plausibly addresses the item under rules 1–4, return covered=true. A missed positive is worse than a charitable positive — the student wants real-time progress feedback.
 
-8) DON'T HALLUCINATE. Silence and unrelated talk don't count. If the transcript truly doesn't address the item, covered=false with confidence=0.
+8) NAMED DIAGNOSTIC TESTS ARE SPECIFIC — DO NOT BE GENEROUS HERE.
+   Items that are named clinical tests / signs / maneuvers (e.g., "Bear Hug Test", "Lift-Off Test", "Hawkins-Kennedy", "Neer's", "Speed's", "Yergason's", "Apley's Scratch", "Drop Arm", "Empty Can", "Cross-body Adduction", "O'Brien's", "Painful Arc", etc.) are SPECIFIC procedures with specific maneuvers. Credit them ONLY when:
+   - the student NAMES the test (or a clearly recognizable variant), OR
+   - the student DESCRIBES that specific maneuver (e.g., for Bear Hug: "patient places palm on opposite shoulder and resists external rotation"; for Hawkins-Kennedy: "shoulder forward-flexed to 90 with elbow flexed and internally rotated").
+   DO NOT credit a named test merely because the student mentioned the same target structure or an adjacent test. Two subscapularis tests (Lift-Off and Bear Hug) are NOT covered by saying "I'll test subscapularis" — that addresses neither test specifically.
+
+9) DON'T HALLUCINATE. Silence and unrelated talk don't count. If the transcript truly doesn't address the item, covered=false with confidence=0.
 
 CONFIDENCE.
 - 0.8–1.0: match is clear (explicit phrasing or direct paraphrase).
@@ -401,7 +407,8 @@ CONFIDENCE.
 - Below 0.5: you're guessing — return covered=false in that case.
 
 OUTPUT CONTRACT.
-- Return JSON {"items":[{"id":<number>,"covered":<boolean>,"confidence":<0..1>}]}.
+- Return JSON {"items":[{"id":<number>,"covered":<boolean>,"confidence":<0..1>,"match":<string>}]}.
+  - "match": the exact phrase or short span from the transcript that triggered this match (verbatim, ≤120 chars). Empty string if covered=false. This is logged for auditing — never invent text not present in the transcript.
 - Exactly one entry per input id. Do not drop ids, do not invent ids.
 - Every input is a leaf — do not try to infer parent-heading coverage; the caller handles aggregation.${physicalRule}`;
 
@@ -442,6 +449,7 @@ OUTPUT CONTRACT.
         number,
         { covered: boolean; confidence: number }
       >();
+      const leafMatches = new Map<number, string>();
       for (const entry of Array.isArray(parsedJson.items) ? parsedJson.items : []) {
         if (
           typeof entry?.id === "number" &&
@@ -455,6 +463,11 @@ OUTPUT CONTRACT.
                 ? 0.9
                 : 0;
           leafCoverage.set(entry.id, { covered: entry.covered, confidence: conf });
+          if (entry.covered && typeof entry.match === "string" && entry.match.trim()) {
+            // Cap at 200 chars defensively — schema allows more but
+            // matched_transcript is for audit, not full transcript replay.
+            leafMatches.set(entry.id, entry.match.slice(0, 200));
+          }
         }
       }
 
@@ -493,18 +506,29 @@ OUTPUT CONTRACT.
         covered: boolean;
         confidence: number;
         partial: boolean;
+        match?: string;
       }> = [];
       const aggregatedOut: Record<
         string,
         { covered: boolean; partial: boolean; confidence: number }
       > = {};
       for (const [id, cov] of Array.from(aggregated.entries())) {
-        itemsOut.push({
+        const out: {
+          id: number;
+          covered: boolean;
+          confidence: number;
+          partial: boolean;
+          match?: string;
+        } = {
           id,
           covered: cov.covered,
           confidence: cov.confidence,
           partial: cov.partial,
-        });
+        };
+        // Only leaves get a matched span (parents are derived).
+        const matched = leafMatches.get(id);
+        if (matched) out.match = matched;
+        itemsOut.push(out);
         aggregatedOut[String(id)] = {
           covered: cov.covered,
           partial: cov.partial,

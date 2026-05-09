@@ -557,6 +557,7 @@ export default function AIPracticeModePage() {
           itemId: item.id,
           status: covered ? "checked" : "missed",
           timestampSeconds: undefined,
+          matchedTranscript: result?.match ?? undefined,
         };
       });
 
@@ -590,13 +591,15 @@ export default function AIPracticeModePage() {
         }
       }
 
-      // Update session
+      // Update session — persist the full cumulative transcript so future
+      // false-positive / false-negative reports are auditable.
       await updateSession.mutateAsync({
         id: sid,
         data: {
           endedAt: new Date().toISOString(),
           totalScore,
           timeUsedSeconds: elapsedSeconds,
+          transcript: narration.transcript || undefined,
         },
       });
 

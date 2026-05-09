@@ -85,6 +85,7 @@ export function useUpdateSession() {
         totalScore?: number;
         criticalItemsMissed?: boolean;
         endedAt?: string;
+        transcript?: string;
       };
     }) => {
       const res = await apiRequest("PUT", `/api/sessions/${id}`, data);
@@ -115,6 +116,7 @@ export function useSaveItemResults() {
         itemId: number;
         status: string;
         timestampSeconds?: number;
+        matchedTranscript?: string;
       }>;
     }) => {
       const res = await apiRequest(

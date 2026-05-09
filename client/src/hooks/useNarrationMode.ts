@@ -46,7 +46,7 @@ interface UseNarrationModeReturn {
    * heading goes ✓ as soon as all of its children are covered — no need for
    * the student to verbally say the heading text itself.
    */
-  checkResults: Map<number, { covered: boolean; confidence: number }>;
+  checkResults: Map<number, { covered: boolean; confidence: number; match?: string }>;
   /** Leaf-only covered count (parents are headings, not scored). */
   coveredCount: number;
   /** Leaf-only total (the score denominator). */
