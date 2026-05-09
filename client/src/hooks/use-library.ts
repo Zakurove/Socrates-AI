@@ -13,7 +13,6 @@ export interface StationFilters {
   q?: string;
   type?: string;
   specialty?: string;
-  difficulty?: string;
   sort?: StationSort;
   page?: number;
   pageSize?: number;

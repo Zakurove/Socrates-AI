@@ -128,6 +128,12 @@ export default function AuthorProfilePage() {
             <div className="min-w-0 flex-1">
               <h1 className="truncate font-display text-h1 text-foreground">
                 {data.displayName}
+                <span
+                  aria-hidden
+                  className="ml-2 align-middle text-[15px] font-medium text-muted-foreground tabular-nums"
+                >
+                  #{data.id}
+                </span>
               </h1>
               <p className="text-caption text-muted-foreground">
                 Member since {memberSince(data.memberSince)}

@@ -7,6 +7,7 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { stationTypeLabel, cn } from "@/lib/utils";
+import { SPECIALTIES } from "@/lib/specialties";
 import type { StationSort } from "@/hooks/use-library";
 
 const TYPE_FILTERS: Array<{ value: string; label: string }> = [
@@ -26,18 +27,10 @@ const SORTS: { value: StationSort; label: string }[] = [
   { value: "practices", label: "Most practiced" },
 ];
 
-const DIFFICULTIES = [
-  { value: "__all__", label: "Any" },
-  { value: "beginner", label: "Beginner" },
-  { value: "intermediate", label: "Intermediate" },
-  { value: "advanced", label: "Advanced" },
-];
-
 interface LibraryFiltersProps {
   value: {
     type?: string;
     specialty?: string;
-    difficulty?: string;
     sort?: StationSort;
   };
   onChange: (v: LibraryFiltersProps["value"]) => void;
@@ -47,24 +40,13 @@ const ALL = "__all__";
 
 export function LibraryFilters({ value, onChange }: LibraryFiltersProps) {
   const [specialty, setSpecialty] = useState(value.specialty ?? "");
-  const [showSpecialty, setShowSpecialty] = useState(!!value.specialty);
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if ((specialty || "") !== (value.specialty || "")) {
-        onChange({ ...value, specialty: specialty || undefined });
-      }
-    }, 250);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [specialty]);
 
   useEffect(() => {
     setSpecialty(value.specialty ?? "");
   }, [value.specialty]);
 
   const activeType = value.type ?? ALL;
-  const activeDifficulty = value.difficulty ?? ALL;
+  const activeSpecialty = specialty || ALL;
   const activeSort = value.sort ?? "recent";
 
   return (
@@ -103,7 +85,7 @@ export function LibraryFilters({ value, onChange }: LibraryFiltersProps) {
         })}
       </div>
 
-      {/* Sort + Difficulty row */}
+      {/* Sort + Specialty row */}
       <div className="flex items-center gap-2">
         <Select
           value={activeSort}
@@ -123,54 +105,27 @@ export function LibraryFilters({ value, onChange }: LibraryFiltersProps) {
         </Select>
 
         <Select
-          value={activeDifficulty}
-          onValueChange={(v) =>
-            onChange({ ...value, difficulty: v === ALL ? undefined : v })
-          }
+          value={activeSpecialty}
+          onValueChange={(v) => {
+            const next = v === ALL ? "" : v;
+            setSpecialty(next);
+            onChange({ ...value, specialty: next || undefined });
+          }}
         >
           <SelectTrigger className="h-9 w-auto rounded-full border-border/60 bg-muted/60 px-4 text-[13px] font-medium gap-1.5 [&>svg]:opacity-60">
-            <span className="text-muted-foreground">Level:</span>
+            <span className="text-muted-foreground">Specialty:</span>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {DIFFICULTIES.map((d) => (
-              <SelectItem key={d.value} value={d.value}>
-                {d.label}
+            <SelectItem value={ALL}>Any</SelectItem>
+            {SPECIALTIES.map((s) => (
+              <SelectItem key={s} value={s}>
+                {s}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-
-        <button
-          type="button"
-          onClick={() => {
-            if (showSpecialty && specialty) {
-              setSpecialty("");
-            }
-            setShowSpecialty((v) => !v);
-          }}
-          className={cn(
-            "ml-auto h-9 shrink-0 rounded-full px-4 text-[13px] font-medium transition-smooth",
-            showSpecialty || specialty
-              ? "bg-primary/10 text-primary"
-              : "bg-muted/60 text-muted-foreground hover:text-foreground",
-          )}
-          aria-pressed={showSpecialty}
-        >
-          Specialty
-        </button>
       </div>
-
-      {showSpecialty && (
-        <input
-          type="search"
-          value={specialty}
-          onChange={(e) => setSpecialty(e.target.value)}
-          placeholder="e.g. Orthopaedics"
-          className="h-10 w-full rounded-xl border border-border/60 bg-card px-3 text-[13px] outline-none focus:border-primary/50"
-          aria-label="Filter by specialty"
-        />
-      )}
     </div>
   );
 }

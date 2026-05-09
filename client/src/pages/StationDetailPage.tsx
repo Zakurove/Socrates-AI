@@ -536,12 +536,6 @@ export default function StationDetailPage() {
             </span>
             <span aria-hidden>·</span>
             <span className="tabular-nums">{totalItems} items</span>
-            {station.difficulty && (
-              <>
-                <span aria-hidden>·</span>
-                <span className="capitalize">{station.difficulty}</span>
-              </>
-            )}
             {isPublished && (
               <>
                 <span aria-hidden>·</span>

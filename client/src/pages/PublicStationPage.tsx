@@ -426,12 +426,6 @@ export default function PublicStationPage() {
                 <span>{station.specialty}</span>
               </>
             )}
-            {station.difficulty && (
-              <>
-                <span aria-hidden>·</span>
-                <span className="capitalize">{station.difficulty}</span>
-              </>
-            )}
             <span aria-hidden>·</span>
             <span className="tabular-nums">
               {station.defaultTimeMinutes} min

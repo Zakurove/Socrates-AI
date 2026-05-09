@@ -40,9 +40,6 @@ export function PublicStationCard({
   className,
 }: PublicStationCardProps) {
   const Icon = typeIcon(station.type);
-  const difficulty = station.difficulty
-    ? station.difficulty.charAt(0).toUpperCase() + station.difficulty.slice(1)
-    : null;
 
   return (
     <Link
@@ -69,7 +66,6 @@ export function PublicStationCard({
             <p className="mt-0.5 text-caption text-muted-foreground">
               {stationTypeLabel(station.type)}
               {station.specialty ? ` · ${station.specialty}` : ""}
-              {difficulty ? ` · ${difficulty}` : ""}
             </p>
           </div>
         </div>

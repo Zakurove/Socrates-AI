@@ -51,7 +51,12 @@ export function PublicStationRow({ station, className }: PublicStationRowProps) 
           {station.title}
         </h3>
         <div className="mt-1 flex flex-wrap items-center gap-x-1.5 text-caption text-muted-foreground">
-          <span className="truncate">{station.author.displayName}</span>
+          <span className="truncate">
+            {station.author.displayName}
+            <span aria-hidden className="ml-1 text-[11px] tracking-tight tabular-nums opacity-70">
+              #{station.author.id}
+            </span>
+          </span>
           <span aria-hidden>·</span>
           <span>{stationTypeLabel(station.type)}</span>
           {station.specialty && (

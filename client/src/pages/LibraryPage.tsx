@@ -62,20 +62,18 @@ export default function LibraryPage() {
   const q = params.get("q") ?? "";
   const type = params.get("type") ?? undefined;
   const specialty = params.get("specialty") ?? undefined;
-  const difficulty = params.get("difficulty") ?? undefined;
   const sort = (params.get("sort") as StationSort) ?? "recent";
 
   useEffect(() => {
     document.title = "Community library — Socrates AI";
   }, []);
 
-  const filtersActive = !!(q || type || specialty || difficulty);
+  const filtersActive = !!(q || type || specialty);
 
   const listQuery = useLibraryStations({
     q: q || undefined,
     type,
     specialty,
-    difficulty,
     sort,
     pageSize: 24,
   });
@@ -104,12 +102,11 @@ export default function LibraryPage() {
         <LibrarySearchBar value={q} onChange={(v) => update({ q: v })} className="lg:max-w-xl" />
 
         <LibraryFilters
-          value={{ type, specialty, difficulty, sort }}
+          value={{ type, specialty, sort }}
           onChange={(v) =>
             update({
               type: v.type,
               specialty: v.specialty,
-              difficulty: v.difficulty,
               sort: v.sort,
             })
           }

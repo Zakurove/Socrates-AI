@@ -35,7 +35,7 @@ export function AuthorBadge({ author, size = "sm", className }: AuthorBadgeProps
         "group inline-flex items-center gap-2 text-left min-h-[32px] rounded-full transition-colors cursor-pointer",
         className,
       )}
-      aria-label={`Author: ${author.displayName}. Open profile.`}
+      aria-label={`Author: ${author.displayName} (id ${author.id}). Open profile.`}
     >
       <Avatar className={avatarClass}>
         <AvatarFallback className="bg-primary/15 text-primary text-xs font-semibold">
@@ -49,6 +49,12 @@ export function AuthorBadge({ author, size = "sm", className }: AuthorBadgeProps
         )}
       >
         {author.displayName}
+        <span
+          aria-hidden
+          className="ml-1.5 text-[11px] font-normal text-muted-foreground tracking-tight tabular-nums"
+        >
+          #{author.id}
+        </span>
       </span>
     </button>
   );

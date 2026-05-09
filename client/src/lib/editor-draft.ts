@@ -65,7 +65,6 @@ export interface DraftData {
   scenario: string;
   patientBriefing: string;
   specialty: string;
-  difficulty: string;
   defaultTimeMinutes: number;
   readingTimeMinutes: number;
   sections: DraftSection[];

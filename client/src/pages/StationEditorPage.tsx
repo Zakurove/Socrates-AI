@@ -8,12 +8,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -75,7 +69,12 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn, stationTypeLabel } from "@/lib/utils";
+import { SPECIALTIES } from "@/lib/specialties";
 import { saveDraft, loadDraft, clearDraft, type DraftData } from "@/lib/editor-draft";
+
+// Sentinel value for the "Unspecified" Select option. Radix Select doesn't
+// allow empty-string values, so we map "" <-> NO_SPECIALTY at the boundary.
+const NO_SPECIALTY = "__none__";
 import { parseVideoUrl } from "@/lib/video";
 import { ToastAction } from "@/components/ui/toast";
 import type { CreateStationPayload } from "@shared/schema";
@@ -206,7 +205,6 @@ export default function StationEditorPage() {
   const [scenario, setScenario] = useState("");
   const [patientBriefing, setPatientBriefing] = useState("");
   const [specialty, setSpecialty] = useState("");
-  const [difficulty, setDifficulty] = useState<string>("");
   const [defaultTimeMinutes, setDefaultTimeMinutes] = useState(7);
   const [readingTimeMinutes, setReadingTimeMinutes] = useState(1);
   const [sections, setSections] = useState<EditorSection[]>([]);
@@ -272,7 +270,6 @@ export default function StationEditorPage() {
       setScenario(existingStation.scenario || "");
       setPatientBriefing(existingStation.patientBriefing || "");
       setSpecialty(existingStation.specialty || "");
-      setDifficulty(existingStation.difficulty || "");
       setDefaultTimeMinutes(existingStation.defaultTimeMinutes);
       setReadingTimeMinutes(existingStation.readingTimeMinutes);
       setShowBriefing(!!existingStation.patientBriefing);
@@ -387,7 +384,6 @@ export default function StationEditorPage() {
     scenario,
     patientBriefing,
     specialty,
-    difficulty,
     defaultTimeMinutes,
     readingTimeMinutes,
     sections,
@@ -424,7 +420,6 @@ export default function StationEditorPage() {
       setScenario(draft.scenario);
       setPatientBriefing(draft.patientBriefing);
       setSpecialty(draft.specialty);
-      setDifficulty(draft.difficulty);
       setDefaultTimeMinutes(draft.defaultTimeMinutes);
       setReadingTimeMinutes(draft.readingTimeMinutes);
       setSections(draft.sections.map((sec) => ({
@@ -497,7 +492,6 @@ export default function StationEditorPage() {
         scenario,
         patientBriefing,
         specialty,
-        difficulty,
         defaultTimeMinutes,
         readingTimeMinutes,
         sections,
@@ -518,7 +512,6 @@ export default function StationEditorPage() {
     scenario,
     patientBriefing,
     specialty,
-    difficulty,
     defaultTimeMinutes,
     readingTimeMinutes,
     sections,
@@ -1288,7 +1281,6 @@ export default function StationEditorPage() {
     referenceImageUrl: referenceImageUrl || null,
     referenceImageCaption: referenceImageCaption || null,
     specialty: specialty || undefined,
-    difficulty: difficulty ? (difficulty as "beginner" | "intermediate" | "advanced") : undefined,
     tags: [],
     sections: sections.map((sec, si) => ({
       title: sec.title || `Section ${si + 1}`,
@@ -1406,7 +1398,6 @@ export default function StationEditorPage() {
     scenario,
     patientBriefing,
     specialty,
-    difficulty,
     defaultTimeMinutes,
     readingTimeMinutes,
     sections,
@@ -1794,38 +1785,32 @@ export default function StationEditorPage() {
           </div>
         </div>
 
-        {/* Details disclosure */}
-        <Accordion type="single" collapsible>
-          <AccordionItem value="details" className="rounded-2xl border border-border/40 bg-card px-4">
-            <AccordionTrigger className="text-body hover:no-underline">Details</AccordionTrigger>
-            <AccordionContent>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 pt-2 pb-2">
-                <div className="space-y-1.5">
-                  <Label className="text-label text-muted-foreground">Specialty</Label>
-                  <Input
-                    className="h-12 rounded-xl border-0 bg-muted/30 px-4 text-[17px]"
-                    placeholder="e.g., Cardiology"
-                    value={specialty}
-                    onChange={(e) => setSpecialty(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-label text-muted-foreground">Difficulty</Label>
-                  <Select value={difficulty} onValueChange={setDifficulty}>
-                    <SelectTrigger className="h-12 rounded-xl border-0 bg-muted/30 px-4 text-[17px]">
-                      <SelectValue placeholder="Select" />
-                    </SelectTrigger>
-                    <SelectContent className="rounded-2xl shadow-lg">
-                      <SelectItem value="beginner" className="h-9">Beginner</SelectItem>
-                      <SelectItem value="intermediate" className="h-9">Intermediate</SelectItem>
-                      <SelectItem value="advanced" className="h-9">Advanced</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
+        {/* Specialty (always visible — primary metadata for filtering / discovery) */}
+        <div className="space-y-1.5">
+          <Label className="text-label text-muted-foreground">Specialty</Label>
+          <Select
+            value={specialty || NO_SPECIALTY}
+            onValueChange={(v) => setSpecialty(v === NO_SPECIALTY ? "" : v)}
+          >
+            <SelectTrigger className="h-12 rounded-xl border-0 bg-muted/30 px-4 text-[17px]">
+              <SelectValue placeholder="Select a specialty" />
+            </SelectTrigger>
+            <SelectContent className="rounded-2xl shadow-lg">
+              <SelectItem value={NO_SPECIALTY} className="h-9">— Unspecified —</SelectItem>
+              {SPECIALTIES.map((s) => (
+                <SelectItem key={s} value={s} className="h-9">
+                  {s}
+                </SelectItem>
+              ))}
+              {/* Legacy specialty value not in canonical list — keep editable. */}
+              {specialty && !SPECIALTIES.includes(specialty as typeof SPECIALTIES[number]) && (
+                <SelectItem value={specialty} className="h-9">
+                  {specialty} <span className="text-muted-foreground">(legacy)</span>
+                </SelectItem>
+              )}
+            </SelectContent>
+          </Select>
+        </div>
 
         {/* Reference image (Image ID only) */}
         {type === "image_id" && (
