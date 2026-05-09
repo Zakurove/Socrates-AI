@@ -9,7 +9,6 @@ import {
   Mic,
   Play,
   Search,
-  Sparkles,
 } from "lucide-react";
 import { useStations } from "@/hooks/use-stations";
 import {
@@ -381,7 +380,6 @@ export default function MockExamNewPage() {
                 Icon={Mic}
                 title="AI Listen"
                 description="Speak aloud — AI listens and marks your checklist."
-                premium
               />
               <ModeCard
                 active={practiceMode === "ai_conversation"}
@@ -392,7 +390,6 @@ export default function MockExamNewPage() {
                 Icon={MessageCircle}
                 title="AI Conversation"
                 description="Talk with a simulated patient, then answer examiner questions."
-                premium
                 disabled={aiConversationDisabled}
                 disabledCaption="Every station in this circuit needs a patient briefing. Edit stations to enable."
               />
@@ -519,7 +516,6 @@ function ModeCard({
   Icon,
   title,
   description,
-  premium,
   disabled,
   disabledCaption,
 }: {
@@ -528,7 +524,6 @@ function ModeCard({
   Icon: typeof CheckSquare;
   title: string;
   description: string;
-  premium?: boolean;
   disabled?: boolean;
   disabledCaption?: string;
 }) {
@@ -559,19 +554,9 @@ function ModeCard({
         <Icon className="h-4 w-4" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <p className="text-[17px] font-semibold tracking-tight text-foreground">
-            {title}
-          </p>
-          {premium && !disabled && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-brand-accent/15 px-2 py-0.5">
-              <Sparkles className="h-3 w-3 text-brand-accent" />
-              <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-brand-accent">
-                Premium
-              </span>
-            </span>
-          )}
-        </div>
+        <p className="text-[17px] font-semibold tracking-tight text-foreground">
+          {title}
+        </p>
         <p className="mt-0.5 text-caption text-muted-foreground">
           {disabled && disabledCaption ? disabledCaption : description}
         </p>

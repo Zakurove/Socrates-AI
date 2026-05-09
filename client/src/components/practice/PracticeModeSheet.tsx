@@ -26,28 +26,24 @@ const modes: Array<{
   icon: typeof CheckSquare;
   title: string;
   description: string;
-  premium: boolean;
 }> = [
   {
     key: "self-check",
     icon: CheckSquare,
     title: "Self-check",
     description: "Check items off yourself as you go.",
-    premium: false,
   },
   {
     key: "ai-listen",
     icon: Mic,
     title: "AI Listen",
     description: "Speak aloud — AI listens and marks your checklist.",
-    premium: true,
   },
   {
     key: "ai-conversation",
     icon: MessageCircle,
     title: "AI Conversation",
     description: "Talk with a simulated patient, then answer examiner questions.",
-    premium: true,
   },
 ];
 
@@ -122,7 +118,7 @@ export function PracticeModeSheet({
         </DialogHeader>
 
         <div className="flex flex-col gap-3 px-6 pt-4 pb-6">
-          {modes.map(({ key, icon: Icon, title, description, premium }) => {
+          {modes.map(({ key, icon: Icon, title, description }) => {
             const isDisabled =
               (key === "ai-conversation" && !hasPatientBriefing) ||
               (key === "ai-listen" && isQA);
@@ -162,14 +158,6 @@ export function PracticeModeSheet({
                       : description}
                   </p>
                 </div>
-                {premium && (
-                  <span
-                    className="absolute right-3 top-3 inline-flex items-center rounded-xl bg-brand-accent/10 px-2 py-0.5 text-label text-brand-accent tracking-[0.08em]"
-                    aria-label="Premium feature"
-                  >
-                    Premium
-                  </span>
-                )}
               </button>
             );
           })}

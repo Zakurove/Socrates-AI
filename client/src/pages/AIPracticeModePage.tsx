@@ -16,7 +16,8 @@ import {
 } from "@/hooks/use-sessions";
 import { useNarrationMode } from "@/hooks/useNarrationMode";
 import { useGeminiLive } from "@/hooks/useGeminiLive";
-import { TimerBar } from "@/components/TimerBar";
+import { SessionTimerRing } from "@/components/SessionTimerRing";
+import { useTimerVisibility } from "@/hooks/useTimerVisibility";
 import { MicButton } from "@/components/practice/MicButton";
 import { ConversationArea } from "@/components/practice/ConversationArea";
 import { PhaseTransition } from "@/components/practice/PhaseTransition";
@@ -88,6 +89,7 @@ export default function AIPracticeModePage() {
   const updateSession = useUpdateSession();
   const saveItemResults = useSaveItemResults();
   const { toast } = useToast();
+  const timerVisibility = useTimerVisibility();
 
   // Parse mode from URL
   const mode: AIMode = useMemo(
@@ -965,7 +967,12 @@ export default function AIPracticeModePage() {
             (silent, non-fatal reassurance — no toast). */}
         <div className="px-5 pt-4 pb-3">
           <div className="relative">
-            <TimerBar totalSeconds={totalSeconds} elapsedSeconds={elapsedSeconds} />
+            <SessionTimerRing
+              totalSeconds={totalSeconds}
+              elapsedSeconds={elapsedSeconds}
+              hidden={timerVisibility.hidden}
+              onToggleHide={timerVisibility.toggle}
+            />
             {narration.chunkError && (
               <span
                 aria-label="Reconnecting"
@@ -1074,7 +1081,12 @@ export default function AIPracticeModePage() {
       <div className="flex h-screen flex-col bg-background">
         {/* Timer */}
         <div className="px-5 pt-4 pb-3">
-          <TimerBar totalSeconds={totalSeconds} elapsedSeconds={elapsedSeconds} />
+          <SessionTimerRing
+            totalSeconds={totalSeconds}
+            elapsedSeconds={elapsedSeconds}
+            hidden={timerVisibility.hidden}
+            onToggleHide={timerVisibility.toggle}
+          />
         </div>
 
         {/* Reference image for image_id */}
@@ -1223,7 +1235,12 @@ export default function AIPracticeModePage() {
       <div className="flex h-screen flex-col bg-background">
         {/* Timer */}
         <div className="px-5 pt-4 pb-3">
-          <TimerBar totalSeconds={totalSeconds} elapsedSeconds={elapsedSeconds} />
+          <SessionTimerRing
+            totalSeconds={totalSeconds}
+            elapsedSeconds={elapsedSeconds}
+            hidden={timerVisibility.hidden}
+            onToggleHide={timerVisibility.toggle}
+          />
         </div>
 
         {/* Examiner question hero */}

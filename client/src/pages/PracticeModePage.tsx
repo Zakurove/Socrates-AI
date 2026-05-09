@@ -8,7 +8,8 @@ import {
   useSaveItemResults,
   useSaveQuestionResults,
 } from "@/hooks/use-sessions";
-import { TimerBar } from "@/components/TimerBar";
+import { SessionTimerRing } from "@/components/SessionTimerRing";
+import { useTimerVisibility } from "@/hooks/useTimerVisibility";
 import { ChecklistItem, ChecklistItemStatus } from "@/components/ChecklistItem";
 import { ReadingPhase } from "@/components/practice/ReadingPhase";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,7 @@ export default function PracticeModePage() {
   const saveItemResults = useSaveItemResults();
   const saveQuestionResults = useSaveQuestionResults();
   const { toast } = useToast();
+  const timerVisibility = useTimerVisibility();
 
   const [phase, setPhase] = useState<Phase>("reading");
   const [sessionId, setSessionId] = useState<number | null>(null);
@@ -1016,12 +1018,14 @@ export default function PracticeModePage() {
   // ==================== PRACTICE PHASE ====================
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      {/* Header: timer pill */}
+      {/* Header: rich session timer */}
       <div className="sticky top-0 z-30 border-b border-border/40 bg-background/75 backdrop-blur-xl px-5 py-3 safe-top">
         <div className="mx-auto max-w-lg">
-          <TimerBar
+          <SessionTimerRing
             totalSeconds={totalSeconds}
             elapsedSeconds={elapsedSeconds}
+            hidden={timerVisibility.hidden}
+            onToggleHide={timerVisibility.toggle}
           />
         </div>
       </div>
@@ -1498,6 +1502,7 @@ function ImageIdPracticeView({
   }, []);
 
   const sheetHeight = referenceImageUrl ? vh * SNAPS[snapIdx] : vh;
+  const timerVisibility = useTimerVisibility();
 
   return (
     <div className="fixed inset-0 flex flex-col bg-background overflow-hidden">
@@ -1505,9 +1510,11 @@ function ImageIdPracticeView({
       <div className="sticky top-0 z-30 border-b border-border/40 bg-background/75 backdrop-blur-xl px-5 py-3 safe-top">
         <div className="mx-auto max-w-lg">
           <div className="flex items-center gap-3">
-            <TimerBar
+            <SessionTimerRing
               totalSeconds={totalSeconds}
               elapsedSeconds={elapsedSeconds}
+              hidden={timerVisibility.hidden}
+              onToggleHide={timerVisibility.toggle}
               className="flex-1"
             />
             <Button
