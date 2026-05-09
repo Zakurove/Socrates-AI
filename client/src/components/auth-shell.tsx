@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { AlphaBadge } from "@/components/AlphaBadge";
 
 /**
  * Shared chrome for every auth-flow page (sign in / register / verify email /
@@ -36,6 +37,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
           <span className="text-[15px] font-bold tracking-tight text-zinc-900">
             Socrates AI
           </span>
+          <AlphaBadge />
         </header>
         {children}
       </div>

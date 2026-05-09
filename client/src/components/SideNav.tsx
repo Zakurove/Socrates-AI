@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { NAV_ITEMS, isNavItemActive } from "@/lib/nav-items";
 import { useAuth } from "@/hooks/use-auth";
+import { AlphaBadge } from "@/components/AlphaBadge";
 
 const STORAGE_KEY = "sidenav-collapsed";
 
@@ -62,7 +63,10 @@ export function SideNav() {
         {/* Brand text — hidden when collapsed */}
         {!collapsed && (
           <div className="min-w-0 flex-1 leading-tight">
-            <div className="text-h3 text-foreground">Socrates AI</div>
+            <div className="flex items-center gap-2">
+              <span className="text-h3 text-foreground">Socrates AI</span>
+              <AlphaBadge />
+            </div>
             <div className="text-caption text-muted-foreground">OSCE practice</div>
           </div>
         )}
