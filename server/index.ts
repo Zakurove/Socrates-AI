@@ -16,6 +16,29 @@ const debugErrors = process.env.DEBUG_ERRORS === "1";
 // Trust proxy so req.ip works behind a reverse proxy / Replit edge.
 app.set("trust proxy", 1);
 
+// ─── Canonical host redirect ─────────────────────────────
+// Bounce any non-canonical host (legacy railway.app URL, www variant) to the
+// canonical APP_URL host. Production-only; opts out for the health probe so
+// platform health checks against the railway.app hostname keep passing.
+if (!isDev) {
+  try {
+    const canonicalHost = new URL(
+      process.env.APP_URL || "https://trysocrates.app",
+    ).hostname;
+    app.use((req, res, next) => {
+      if (req.path === "/api/health") return next();
+      const host = req.hostname;
+      if (host && host !== canonicalHost) {
+        const target = `https://${canonicalHost}${req.originalUrl}`;
+        return res.redirect(301, target);
+      }
+      next();
+    });
+  } catch {
+    // Bad APP_URL — skip redirect rather than crash.
+  }
+}
+
 // ─── Global middleware ────────────────────────────────────
 app.use(
   helmet({
