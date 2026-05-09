@@ -178,12 +178,17 @@ router.post("/:id/item-results", async (req, res, next) => {
     if (!station) {
       return res.status(404).json({ message: "Station not found" });
     }
+    // Recurse all 3 levels (items → subItems → subItems). Previously stopped
+    // at level 2, which silently dropped sub-sub-item results.
     const allowedItemIds = new Set<number>();
     for (const section of station.sections ?? []) {
       for (const it of section.items ?? []) {
         allowedItemIds.add(it.id);
         for (const sub of (it as any).subItems ?? []) {
           allowedItemIds.add(sub.id);
+          for (const ssub of (sub as any).subItems ?? []) {
+            allowedItemIds.add(ssub.id);
+          }
         }
       }
     }

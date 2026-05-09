@@ -161,6 +161,10 @@ export default function AIPracticeModePage() {
 
   // Flatten items for checklist (used for saving per-item results — includes
   // parents so the results UI can render the hierarchy).
+  // Walks all 3 levels: top-level items → sub-items → sub-sub-items. Missing
+  // the 3rd level previously caused sub-sub-item results to silently drop on
+  // save, leaving the results page showing only items in itemResults — so the
+  // user couldn't see what they missed.
   const flatItems = useMemo(() => {
     if (!station) return [];
     const result: Array<{ id: number; text: string; isCritical: boolean }> = [];
@@ -185,6 +189,20 @@ export default function AIPracticeModePage() {
                     text: sub.text,
                     isCritical: sub.isCritical,
                   });
+                  const subSubs = (sub as any).subItems as
+                    | Array<{ id: number; text: string; isCritical: boolean; order: number }>
+                    | undefined;
+                  if (subSubs) {
+                    [...subSubs]
+                      .sort((a, b) => a.order - b.order)
+                      .forEach((ssub) => {
+                        result.push({
+                          id: ssub.id,
+                          text: ssub.text,
+                          isCritical: ssub.isCritical,
+                        });
+                      });
+                  }
                 });
             }
           });
