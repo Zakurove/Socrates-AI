@@ -53,21 +53,23 @@ export function SideNav() {
           collapsed ? "flex-col gap-2 px-0" : "gap-3 px-5",
         )}
       >
-        <img
-          src="/brand/icon.png"
-          alt=""
-          className="h-9 w-9 shrink-0 rounded-xl"
-          aria-hidden
-        />
-
-        {/* Brand text — hidden when collapsed */}
-        {!collapsed && (
+        {collapsed ? (
+          <img
+            src="/brand/icon.png"
+            alt="Socrates AI"
+            className="h-11 w-11 shrink-0 rounded-xl"
+          />
+        ) : (
           <div className="min-w-0 flex-1 leading-tight">
             <div className="flex items-center gap-2">
-              <span className="text-h3 text-foreground">Socrates AI</span>
+              <img
+                src="/brand/logo.png"
+                alt="Socrates AI"
+                className="h-10 w-auto shrink-0"
+              />
               <AlphaBadge />
             </div>
-            <div className="text-caption text-muted-foreground">OSCE practice</div>
+            <div className="mt-1 text-caption text-muted-foreground">OSCE practice</div>
           </div>
         )}
 
