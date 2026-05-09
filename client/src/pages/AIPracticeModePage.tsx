@@ -454,13 +454,88 @@ export default function AIPracticeModePage() {
     }
 
     try {
-      // Score uses the iter10 weighted composite: checklist 60% + examiner 40%
-      // when both exist. If the examiner phase was reached, we evaluate the
-      // Gemini transcript against the station's examiner questions and feed
-      // per-question scores into the composite. Unanswered questions count
-      // as 0 so users can't get full marks by skipping examiner Q&A.
-      const coveredCount = narration.coveredCount;
-      const leafTotal = narration.totalLeaves;
+      // Authoritative end-of-session checklist match. The live /check stream
+      // can hit the per-session token cap on long stations, leaving most of
+      // the transcript unscored. /final-check runs once on the full narration
+      // transcript with no cap and is the source of truth for the final
+      // score. Falls back to the interim narration coverage if it errors.
+      const finalCoverage = new Map<number, { covered: boolean; confidence: number; match?: string }>();
+      const narrationTranscript = (narration.transcript ?? "").trim();
+      if (narrationTranscript.length > 0 && sid) {
+        try {
+          const fcRes = await fetch(`/api/practice/${sid}/final-check`, {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ transcript: narrationTranscript }),
+          });
+          if (fcRes.ok) {
+            const body = (await fcRes.json()) as {
+              items: Array<{ id: number; covered: boolean; confidence: number; match?: string }>;
+            };
+            for (const it of body.items) {
+              finalCoverage.set(it.id, {
+                covered: it.covered,
+                confidence: it.confidence,
+                match: it.match,
+              });
+            }
+          } else if (import.meta.env.DEV) {
+            console.warn("[AIPracticeModePage] final-check failed", fcRes.status);
+          }
+        } catch (fcErr) {
+          if (import.meta.env.DEV) {
+            console.warn("[AIPracticeModePage] final-check threw", fcErr);
+          }
+        }
+      }
+
+      // Merge live + final coverage. The live map is monotonic
+      // (covered=true never reverts) so anything credited during the session
+      // stays credited even if the final pass missed it.
+      const liveCoverage = narration.checkResults;
+      const resolveCoverage = (id: number): { covered: boolean; match?: string } => {
+        const live = liveCoverage.get(id);
+        const fin = finalCoverage.get(id);
+        return {
+          covered: !!(live?.covered || fin?.covered),
+          match: live?.match ?? fin?.match,
+        };
+      };
+
+      // Build the leaf-id set from the station tree so we can count covered
+      // leaves correctly. Leaves are items with no children at any depth.
+      const leafIdSet = new Set<number>();
+      if (station) {
+        for (const sec of station.sections) {
+          for (const it of sec.items) {
+            const subs = (it as any).subItems ?? [];
+            if (subs.length === 0) {
+              leafIdSet.add(it.id);
+            } else {
+              for (const sub of subs) {
+                const subSubs = (sub as any).subItems ?? [];
+                if (subSubs.length === 0) {
+                  leafIdSet.add(sub.id);
+                } else {
+                  for (const ss of subSubs) leafIdSet.add(ss.id);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Score uses the iter10 weighted composite: checklist 60% + examiner
+      // 40% when both exist. Only leaves count.
+      const leafTotal = leafIdSet.size || narration.totalLeaves;
+      let coveredCount = 0;
+      for (const id of Array.from(leafIdSet)) {
+        if (resolveCoverage(id).covered) coveredCount++;
+      }
+      // Defensive fallback: if for some reason leafIdSet is empty, trust
+      // the narration hook's own count.
+      if (leafIdSet.size === 0) coveredCount = narration.coveredCount;
       const stationExaminerQuestions = station?.examinerQuestions ?? [];
       const examinerTotal = stationExaminerQuestions.length;
 
@@ -548,18 +623,16 @@ export default function AIPracticeModePage() {
       const totalScore = Math.round(compositeScore);
 
       // Save item results for the FULL flat list (parents + leaves) so the
-      // results page can render the hierarchy. Parent "checked" status is
-      // derived from leaf coverage by the matcher — it's a UI indicator, not
-      // a separate point.
-      const checkResults = narration.checkResults;
+      // results page can render the hierarchy. We use the merged coverage
+      // (live ∪ final-check) so the saved record reflects the authoritative
+      // end-of-session pass.
       const itemResults = flatItems.map((item) => {
-        const result = checkResults.get(item.id);
-        const covered = result?.covered ?? false;
+        const resolved = resolveCoverage(item.id);
         return {
           itemId: item.id,
-          status: covered ? "checked" : "missed",
+          status: resolved.covered ? "checked" : "missed",
           timestampSeconds: undefined,
-          matchedTranscript: result?.match ?? undefined,
+          matchedTranscript: resolved.match ?? undefined,
         };
       });
 

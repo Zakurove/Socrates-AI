@@ -35,7 +35,12 @@ function providerError(res: any) {
 }
 
 // ─── Per-session token caps + transcripts (in-memory) ────────────────────
-const TOKEN_CAP = 25_000;
+// Bumped from 25k → 200k after session 5 hit the cap at ~90s into a 9.5-min
+// shoulder OSCE. Each /check re-sends the full cumulative transcript + the
+// leaf items list, so a real-length physical-exam station easily burns
+// through the old budget. The daily spend cap (per user) is still the real
+// brake; this just stops a single long session from silently going dark.
+const TOKEN_CAP = 200_000;
 interface SessionState {
   tokens: number;
   transcript: { role: "user" | "assistant"; content: string }[];
@@ -254,6 +259,11 @@ router.post("/:sessionId/patient-turn", async (req, res, next) => {
 // ─── POST /api/practice/:sessionId/check ─────────────────────────────────
 const checkSchema = z.object({ transcript: z.string().min(1).max(50_000) }).strict();
 
+// Body is identical to /check. The single difference is that this endpoint
+// runs even after the per-session token cap is exhausted — so the
+// end-of-session pass is always authoritative on the full transcript.
+const finalCheckSchema = z.object({ transcript: z.string().min(1).max(200_000) }).strict();
+
 router.post("/:sessionId/check", async (req, res, next) => {
   try {
     if (!aiEnabled()) return disabled(res);
@@ -272,7 +282,8 @@ router.post("/:sessionId/check", async (req, res, next) => {
     if (overCap(state)) {
       // Do NOT 429 here — that would surface as a toast and kill the narration
       // session. Scoring simply stops updating once the cap is hit; the user
-      // can keep talking and the transcript keeps appending.
+      // can keep talking and the transcript keeps appending. The
+      // end-of-session /final-check pass picks up everything missed here.
       return res.json({ items: [], capReached: true });
     }
 
@@ -539,6 +550,221 @@ OUTPUT CONTRACT.
       return res.json({ items: itemsOut, aggregated: aggregatedOut });
     } catch (err) {
       console.error("[practice/check] openai error:", (err as Error).message);
+      return providerError(res);
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── POST /api/practice/:sessionId/final-check ───────────────────────────
+// Authoritative end-of-session pass: same matcher as /check but ignores the
+// per-session token cap. Called once by the client right before saving
+// item_results. Source-of-truth for the final score; the live /check stream
+// is for real-time UX feedback only.
+router.post("/:sessionId/final-check", async (req, res, next) => {
+  try {
+    if (!aiEnabled()) return disabled(res);
+    const sessionId = parseInt(req.params.sessionId, 10);
+    if (isNaN(sessionId)) return res.status(400).json({ error: "bad_session_id" });
+    const owned = await loadOwnedSession(sessionId, req.user!.id);
+    if (!owned) return res.status(404).json({ error: "session_not_found" });
+
+    const parsed = finalCheckSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "validation_failed" });
+
+    const station = await storage.getStation(owned.stationId);
+    if (!station) return res.status(404).json({ error: "station_not_found" });
+
+    // Build the same checklist tree + leaf payload the live /check builds.
+    type NodeWithText = ChecklistNode & { text: string };
+    const roots: NodeWithText[] = [];
+    type LeafContext = {
+      id: number;
+      text: string;
+      section: string;
+      parentText?: string;
+    };
+    const leafPayload: LeafContext[] = [];
+    for (const sec of station.sections) {
+      for (const it of sec.items) {
+        const subs = (it.subItems ?? []) as Array<{
+          id: number;
+          text: string;
+          subItems?: Array<{ id: number; text: string }>;
+        }>;
+        const itemNode: NodeWithText = {
+          id: it.id,
+          text: it.text,
+          children: subs.map((sub) => {
+            const subSubs = (sub.subItems ?? []) as Array<{
+              id: number;
+              text: string;
+            }>;
+            const subNode: NodeWithText = {
+              id: sub.id,
+              text: sub.text,
+              children: subSubs.map((ss) => {
+                const leaf: NodeWithText = { id: ss.id, text: ss.text };
+                return leaf;
+              }),
+            };
+            return subNode;
+          }),
+        };
+        roots.push(itemNode);
+        if (subs.length === 0) {
+          leafPayload.push({ id: it.id, text: it.text, section: sec.title });
+        } else {
+          for (const sub of subs) {
+            const subSubs = (sub.subItems ?? []) as Array<{
+              id: number;
+              text: string;
+            }>;
+            if (subSubs.length === 0) {
+              leafPayload.push({
+                id: sub.id,
+                text: sub.text,
+                section: sec.title,
+                parentText: it.text,
+              });
+            } else {
+              for (const ss of subSubs) {
+                leafPayload.push({
+                  id: ss.id,
+                  text: ss.text,
+                  section: sec.title,
+                  parentText: sub.text,
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const leafNodes = collectLeafNodes(roots) as NodeWithText[];
+
+    const physicalRule =
+      station.type === "physical_exam"
+        ? `
+
+PHYSICAL EXAM SPECIFIC: The student must address each item via narration — silence alone never counts. But brief, paraphrased, or implicitly-demonstrated narration counts under rules 1–4 above (e.g., "My name is Dr. Smith" satisfies "Introduce yourself"; "pressing on the AC joint" satisfies "palpate the acromioclavicular joint").`
+        : "";
+
+    const sys = `You are an OSCE checklist grader. You receive a student's session transcript and a list of LEAF checklist items. Each item carries a section name and (often) a parent-item text for context. Decide whether the transcript shows the student performing or asking about each item.
+
+GRADING PRINCIPLES — read carefully.
+
+1) WORDING IS FLEXIBLE. The student doesn't need to say the exact checklist text. Paraphrases, lay terms, and clinical synonyms count.
+
+2) DEMONSTRATED ACTIONS COUNT. Performing the action IS doing the item — the student doesn't need to narrate "I will now do X" before doing X.
+
+3) MEDICAL ABBREVIATIONS, SYNONYMS, AND LAY TERMS COUNT. If the abbreviation, lay phrase, or synonym refers to the same anatomical structure or clinical concept as the item text, treat them as equivalent. Common ones (not exhaustive): AC ↔ acromioclavicular; ROM ↔ range of motion; AROM/PROM/FROM ↔ active/passive/full ROM; DTRs ↔ deep tendon reflexes; JVP, SOB, BP, HR ↔ standard expansions.
+
+4) USE SECTION + PARENT CONTEXT TO DISAMBIGUATE. A bare "Tenderness" leaf under section "Palpation" with parentText "Acromioclavicular joint" means AC-joint tenderness — credit when the student palpates that area.
+
+5) ORDER DOESN'T MATTER. The student can do items in any order.
+
+6) ONE LINE CAN COVER MULTIPLE ITEMS. A single sentence may match several leaves.
+
+7) ERR ON THE SIDE OF COVERED — for general history / inspection / palpation actions. A missed positive is worse than a charitable positive.
+
+8) NAMED DIAGNOSTIC TESTS ARE SPECIFIC — DO NOT BE GENEROUS. Items that are named tests (Bear Hug, Lift-Off, Hawkins-Kennedy, Neer's, Speed's, Yergason's, Apley's, Drop Arm, Empty Can, O'Brien's, Painful Arc, etc.) are credited ONLY when the student NAMES the test or DESCRIBES its specific maneuver. Mentioning the target structure alone does not count.
+
+9) DON'T HALLUCINATE. Silence and unrelated talk don't count.
+
+CONFIDENCE: 0.8–1.0 clear, 0.5–0.8 reasonably sure, below 0.5 → covered=false.
+
+OUTPUT CONTRACT.
+- Return JSON {"items":[{"id":<number>,"covered":<boolean>,"confidence":<0..1>,"match":<string>}]}.
+  - "match": a verbatim ≤120-char span from the transcript that triggered the credit. Empty when covered=false.
+- Exactly one entry per input id. Do not drop ids, do not invent ids.${physicalRule}`;
+
+    try {
+      const completion = await openai.chat.completions.create({
+        model: AI_MODELS.checklistMatcher,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: sys },
+          {
+            role: "user",
+            content: `Checklist (leaves only):\n${JSON.stringify(leafPayload)}\n\nTranscript:\n${parsed.data.transcript}`,
+          },
+        ],
+      });
+      const raw = completion.choices[0]?.message?.content ?? "{}";
+      const usage = completion.usage;
+      if (usage) {
+        await logCost(
+          sessionId,
+          req.user!.id,
+          AI_MODELS.checklistMatcher,
+          usage.prompt_tokens ?? 0,
+          usage.completion_tokens ?? 0,
+        );
+      }
+      let parsedJson: any = {};
+      try {
+        parsedJson = JSON.parse(raw);
+      } catch {
+        parsedJson = { items: [] };
+      }
+
+      const validLeafIds = new Set(leafNodes.map((n) => n.id));
+      const leafCoverage = new Map<
+        number,
+        { covered: boolean; confidence: number }
+      >();
+      const leafMatches = new Map<number, string>();
+      for (const entry of Array.isArray(parsedJson.items) ? parsedJson.items : []) {
+        if (
+          typeof entry?.id === "number" &&
+          validLeafIds.has(entry.id) &&
+          typeof entry?.covered === "boolean"
+        ) {
+          const conf =
+            typeof entry.confidence === "number"
+              ? Math.max(0, Math.min(1, entry.confidence))
+              : entry.covered
+                ? 0.9
+                : 0;
+          leafCoverage.set(entry.id, { covered: entry.covered, confidence: conf });
+          if (entry.covered && typeof entry.match === "string" && entry.match.trim()) {
+            leafMatches.set(entry.id, entry.match.slice(0, 200));
+          }
+        }
+      }
+
+      const aggregated = aggregateCoverage(roots, leafCoverage);
+      const itemsOut: Array<{
+        id: number;
+        covered: boolean;
+        confidence: number;
+        partial: boolean;
+        match?: string;
+      }> = [];
+      for (const [id, cov] of Array.from(aggregated.entries())) {
+        const out: {
+          id: number;
+          covered: boolean;
+          confidence: number;
+          partial: boolean;
+          match?: string;
+        } = {
+          id,
+          covered: cov.covered,
+          confidence: cov.confidence,
+          partial: cov.partial,
+        };
+        const matched = leafMatches.get(id);
+        if (matched) out.match = matched;
+        itemsOut.push(out);
+      }
+
+      return res.json({ items: itemsOut });
+    } catch (err) {
+      console.error("[practice/final-check] openai error:", (err as Error).message);
       return providerError(res);
     }
   } catch (err) {
