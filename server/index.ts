@@ -42,7 +42,28 @@ if (!isDev) {
 // ─── Global middleware ────────────────────────────────────
 app.use(
   helmet({
-    contentSecurityPolicy: isDev ? false : undefined,
+    contentSecurityPolicy: isDev
+      ? false
+      : {
+          directives: {
+            ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+            // YouTube + Vimeo embeds (iframe + thumbnails) for VideoEmbed.tsx.
+            "img-src": [
+              "'self'",
+              "data:",
+              "blob:",
+              "https://img.youtube.com",
+              "https://i.ytimg.com",
+              "https://i.vimeocdn.com",
+            ],
+            "frame-src": [
+              "'self'",
+              "https://www.youtube.com",
+              "https://www.youtube-nocookie.com",
+              "https://player.vimeo.com",
+            ],
+          },
+        },
   }),
 );
 
