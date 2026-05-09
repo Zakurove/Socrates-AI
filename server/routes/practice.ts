@@ -281,6 +281,17 @@ router.post("/:sessionId/check", async (req, res, next) => {
     // and take their coverage from aggregation.
     type NodeWithText = ChecklistNode & { text: string };
     const roots: NodeWithText[] = [];
+    // Leaf payload sent to the LLM. We attach `section` and (when applicable)
+    // `parentText` so the model can disambiguate bare leaves like
+    // "Tenderness" — under section "Palpation" with parentText
+    // "Acromioclavicular joint" they unambiguously mean AC-joint tenderness.
+    type LeafContext = {
+      id: number;
+      text: string;
+      section: string;
+      parentText?: string;
+    };
+    const leafPayload: LeafContext[] = [];
     for (const sec of station.sections) {
       for (const it of sec.items) {
         const subs = (it.subItems ?? []) as Array<{
@@ -308,44 +319,91 @@ router.post("/:sessionId/check", async (req, res, next) => {
           }),
         };
         roots.push(itemNode);
+
+        // Walk the same structure to build the LLM payload with context.
+        if (subs.length === 0) {
+          leafPayload.push({ id: it.id, text: it.text, section: sec.title });
+        } else {
+          for (const sub of subs) {
+            const subSubs = (sub.subItems ?? []) as Array<{
+              id: number;
+              text: string;
+            }>;
+            if (subSubs.length === 0) {
+              leafPayload.push({
+                id: sub.id,
+                text: sub.text,
+                section: sec.title,
+                parentText: it.text,
+              });
+            } else {
+              for (const ss of subSubs) {
+                leafPayload.push({
+                  id: ss.id,
+                  text: ss.text,
+                  section: sec.title,
+                  parentText: sub.text,
+                });
+              }
+            }
+          }
+        }
       }
     }
 
     // Only grade LEAVES. Internal nodes will be aggregated after.
     const leafNodes = collectLeafNodes(roots) as NodeWithText[];
-    const leafPayload = leafNodes.map((n) => ({ id: n.id, text: n.text }));
 
     const physicalRule =
       station.type === "physical_exam"
-        ? "Mark items as covered only when the student verbally states they are looking for / performing that action. Do not infer from silence."
+        ? `
+
+PHYSICAL EXAM SPECIFIC: The student must address each item via narration — silence alone never counts. But brief, paraphrased, or implicitly-demonstrated narration counts under rules 1–4 above (e.g., "My name is Dr. Smith" satisfies "Introduce yourself"; "pressing on the AC joint" satisfies "palpate the acromioclavicular joint").`
         : "";
 
-    // Note: we intentionally no longer ask the LLM to consider parent items;
-    // both server and client aggregate coverage for headings from their
-    // leaves. We REQUIRE the LLM to return a row for EVERY leaf id given —
-    // missing ids would otherwise default to covered=false and, combined
-    // with LLM flakiness across successive checks, could cause a
-    // previously-covered leaf to silently drop out. The client is monotonic
-    // so it self-heals, but the immediate UI response should still be right.
-    //
-    // iter9 item 3: the old prompt was too conservative ("require high
-    // confidence… when in doubt, mark as NOT covered"). On single-leaf
-    // stations that produced false negatives — the student would speak the
-    // item aloud and it never flipped to covered. The new prompt tells the
-    // LLM to grade each item independently and to be generous when the
-    // transcript clearly addresses the item intent, even with different
-    // wording. A false-positive here is less harmful than a false-negative
-    // because the student is about to move on and wants to see progress.
-    const sys = `You are an OSCE checklist grader. You will receive a student's session transcript and a list of LEAF checklist items. For each item, decide whether the transcript shows the student performing or asking about that item, then return JSON with the shape {"items":[{"id":<number>,"covered":<boolean>,"confidence":<0..1>}]}.
+    const sys = `You are an OSCE checklist grader. You receive a student's session transcript and a list of LEAF checklist items. Each item carries a section name and (often) a parent-item text for context. Decide whether the transcript shows the student performing or asking about each item.
 
-Grading rules:
-- Grade each item independently. Whether there is 1 item or 50, apply the same standard.
-- Mark an item "covered": true if the transcript contains language that clearly addresses the item's intent — the exact words are not required, paraphrases and close synonyms count. Example: item "Greet the patient" is covered by "Hello, I'm Dr. Smith, nice to meet you."
-- Err on the side of marking "covered": true when the transcript plausibly addresses the item. A short transcript may use different words than the checklist; don't punish that. A missed positive is worse than a charitable positive.
-- Confidence: use 0.8-1.0 when the match is clear, 0.5-0.8 when you are reasonably sure, below 0.5 if you are not.
-- You MUST return exactly one entry per input id. Do not drop ids, do not invent ids. If an item was not addressed, return covered=false with confidence=0.
-- Every item is a leaf. Do not try to infer coverage of parent headings — the caller handles that.
-${physicalRule}`;
+GRADING PRINCIPLES — read carefully.
+
+1) WORDING IS FLEXIBLE. The student doesn't need to say the exact checklist text. Paraphrases, lay terms, and clinical synonyms count.
+
+2) DEMONSTRATED ACTIONS COUNT. Performing the action IS doing the item — the student doesn't need to narrate "I will now do X" before doing X.
+   - "Introduce yourself" → "Hello, my name is Dr. Smith, I'm a physiatry resident." → COVERED.
+   - "Wash hands" / "hand hygiene" → "Let me wash my hands first." → COVERED.
+   - "Confirm the patient's identity" → "Can I just confirm — your name and date of birth?" → COVERED.
+   - "Ask about onset" → "When did this start?" → COVERED.
+
+3) MEDICAL ABBREVIATIONS, SYNONYMS, AND LAY TERMS COUNT. If the abbreviation, lay phrase, or synonym refers to the same anatomical structure or clinical concept as the item text, treat them as equivalent. Common ones (not exhaustive — apply the principle):
+   - AC joint ↔ acromioclavicular joint; SC ↔ sternoclavicular; GH ↔ glenohumeral
+   - ROM ↔ range of motion; AROM/PROM ↔ active/passive ROM; FROM ↔ full ROM
+   - DTRs ↔ deep tendon reflexes ↔ reflexes
+   - JVP ↔ jugular venous pressure
+   - SOB ↔ dyspnoea ↔ "short of breath" ↔ breathless
+   - HR ↔ heart rate ↔ pulse; BP ↔ blood pressure
+   - LBP ↔ low back pain
+   - "test how far the joint moves" ↔ range of motion
+   - "push down on the muscle" ↔ "test the strength" ↔ power testing ↔ muscle strength
+   - Lay descriptions of pathology ("stiff heart" ↔ diastolic dysfunction; "leaky valve" ↔ regurgitation).
+
+4) USE SECTION + PARENT CONTEXT TO DISAMBIGUATE. Each leaf carries a "section" and (often) a "parentText". A bare leaf "Tenderness" under section "Palpation" with parentText "Acromioclavicular joint" means AC-joint tenderness — credit when the student palpates that area, even if they don't say the word "tenderness" explicitly.
+
+5) ORDER DOESN'T MATTER. The student can do items in any order. You're matching content, not sequence.
+
+6) ONE LINE CAN COVER MULTIPLE ITEMS. A single sentence may match several leaves (e.g., "Inspect for swelling, deformity, and skin changes" satisfies three separate inspection items).
+
+7) ERR ON THE SIDE OF COVERED. If the transcript plausibly addresses the item under rules 1–4, return covered=true. A missed positive is worse than a charitable positive — the student wants real-time progress feedback.
+
+8) DON'T HALLUCINATE. Silence and unrelated talk don't count. If the transcript truly doesn't address the item, covered=false with confidence=0.
+
+CONFIDENCE.
+- 0.8–1.0: match is clear (explicit phrasing or direct paraphrase).
+- 0.5–0.8: reasonably sure (lay term, abbreviation, or action-implied).
+- Below 0.5: you're guessing — return covered=false in that case.
+
+OUTPUT CONTRACT.
+- Return JSON {"items":[{"id":<number>,"covered":<boolean>,"confidence":<0..1>}]}.
+- Exactly one entry per input id. Do not drop ids, do not invent ids.
+- Every input is a leaf — do not try to infer parent-heading coverage; the caller handles aggregation.${physicalRule}`;
 
     try {
       const completion = await openai.chat.completions.create({
