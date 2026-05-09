@@ -74,20 +74,79 @@ ${keyPointsList}
 STUDENT'S ANSWER:
 "${studentAnswer}"
 
-INSTRUCTIONS:
-- For each key point, determine if the student's answer demonstrates it:
-  - PRESENT (1.0): The student clearly addressed this point, even if using different words or synonyms (e.g. "teres minor" = "the small teres muscle").
-  - PARTIAL (0.5): The student partially addressed this point or alluded to it without being specific enough.
-  - ABSENT (0.0): The student did not address this point at all.
-- Be fair about synonym recognition and paraphrasing. Medical concepts can be expressed many ways.
-- Provide brief, constructive feedback for each point (1 sentence).
-- Provide an overall feedback summary (2-3 sentences).
+GRADING RULES:
+
+A) DETECT THE QUANTIFIER FIRST.
+Before scoring, scan the QUESTION and the IDEAL ANSWER for a "select-N-of-K"
+directive. Examples:
+  - "Give 3 differential diagnoses"
+  - "Mention any 3 of the following"
+  - "List at least two complications"
+  - "Name two of the following"
+  - "Choose 2 from the list below"
+If found, extract N (the threshold). The listed items are then ALTERNATIVES,
+not cumulative requirements — the student needs only N of them for full credit.
+If both the question and the ideal answer specify a number and they conflict,
+trust the lower one (more lenient to the student).
+
+B) SCORE EACH KEY POINT (for the per-point UI):
+  - PRESENT (1.0): clearly addressed, even with synonyms / paraphrasing
+    (e.g. "teres minor" = "the small teres muscle").
+  - PARTIAL (0.5): partially addressed or alluded to without specificity.
+  - ABSENT (0.0): not addressed.
+Be generous with synonyms, abbreviations, and lay language.
+
+C) COMPUTE THE OVERALL SCORE:
+  - If a select-N-of-K quantifier is present:
+      covered = count of key points the student got PRESENT (PARTIAL counts
+      as 0.5 toward the cover count).
+      overallScore = min(1.0, covered / N).
+      Do NOT penalise for items beyond N — those are alternatives, not gaps.
+  - If no quantifier (cumulative requirements):
+      overallScore = average of all per-point scores (PRESENT=1.0, PARTIAL=0.5,
+      ABSENT=0.0).
+
+D) FEEDBACK.
+  - Per-point feedback: 1 short sentence each.
+  - Overall feedback: 2–3 sentences. If a quantifier was applied, mention it
+    explicitly so the student understands the score (e.g. "You named 3 valid
+    differentials — the question only required 3, so that's full credit.
+    Other acceptable answers included ...").
+
+WORKED EXAMPLES:
+
+Example 1 — quantifier in question:
+  Question: "Give 3 differential diagnoses for shoulder pain."
+  Ideal answer: "Impingement, rotator cuff tear, frozen shoulder, AC joint OA,
+  cervical radiculopathy, glenohumeral OA."
+  Student: "I'd think impingement, rotator cuff pathology, and frozen shoulder."
+  → Quantifier N=3. Covered=3. overallScore=1.0. Mark covered items present,
+  others absent (they are alternatives, not gaps). Feedback notes: "Full credit —
+  3 valid differentials. Other acceptable answers: AC joint OA, cervical
+  radiculopathy, glenohumeral OA."
+
+Example 2 — quantifier in ideal answer:
+  Question: "What are complications of long-term steroid use?"
+  Ideal answer: "Mention any 2 of the following: osteoporosis, diabetes,
+  Cushingoid features, immunosuppression, cataracts, peptic ulceration."
+  Student: "Osteoporosis."
+  → Quantifier N=2. Covered=1. overallScore=0.5. Feedback: "1 of 2 required
+  complications — name one more next time."
+
+Example 3 — no quantifier (cumulative):
+  Question: "Describe the steps of the Apley scratch test."
+  Ideal answer: "Patient reaches behind the head to touch opposite scapula, then
+  behind the back to touch opposite scapula."
+  Student: "They reach behind their head to touch the other shoulder blade."
+  → No quantifier. 1 of 2 steps. overallScore≈0.5.
 
 Respond with ONLY a JSON object in this exact format:
 {
+  "quantifier": { "detected": true|false, "threshold": <integer or 0>, "source": "question" | "idealAnswer" | "none" },
   "pointResults": [
     { "point": "key point text", "status": "present" | "partial" | "absent", "feedback": "brief feedback" }
   ],
+  "overallScore": <number 0.0-1.0>,
   "overallFeedback": "2-3 sentence summary"
 }`;
 
@@ -139,8 +198,16 @@ Respond with ONLY a JSON object in this exact format:
       totalScore += status === "present" ? 1 : status === "partial" ? 0.5 : 0;
     }
 
-    const score =
+    // Prefer the model's overallScore (which honors any select-N-of-K
+    // quantifier it detected). Fall back to the per-point average if the
+    // field is missing or out of range.
+    const fallbackAvg =
       keyPoints.length > 0 ? totalScore / keyPoints.length : 0;
+    const modelScore = Number(parsed.overallScore);
+    const score =
+      Number.isFinite(modelScore) && modelScore >= 0 && modelScore <= 1
+        ? modelScore
+        : fallbackAvg;
 
     const overallFeedback =
       typeof parsed.overallFeedback === "string"
@@ -174,10 +241,49 @@ QUESTION: "${question}"
 IDEAL ANSWER: "${idealAnswer}"
 STUDENT'S ANSWER: "${studentAnswer}"
 
-Score the answer from 0.0 to 1.0 based on completeness and accuracy.
-Provide 2-3 sentences of constructive feedback.
+GRADING RULES:
 
-Respond with ONLY JSON: { "score": number, "feedback": "string" }`;
+A) DETECT THE QUANTIFIER FIRST.
+Scan the QUESTION and the IDEAL ANSWER for a "select-N-of-K" directive.
+Examples: "Give 3 differential diagnoses", "Mention any 3 of the following",
+"List at least two complications", "Name two", "Choose 2 from the list below".
+If found, extract N. The listed items are then ALTERNATIVES — the student
+needs only N for full credit. If both the question and the ideal answer
+specify a number and they conflict, trust the lower one (more lenient).
+
+B) SCORE.
+  - If a quantifier is present:
+      covered = number of distinct items from the candidate list the student
+      addressed (count synonyms / paraphrasing / abbreviations as covered;
+      e.g. "rotator cuff tear" covers "rotator cuff pathology").
+      score = min(1.0, covered / N).
+      Do NOT penalise the student for items beyond N — those are alternatives.
+  - If no quantifier (cumulative requirements):
+      score = fraction of the ideal answer's content the student covered,
+      generous with synonyms / phrasing.
+
+C) FEEDBACK (2–3 sentences).
+If a quantifier was applied, say so explicitly so the student isn't confused
+by a high score next to "missing" items. Example: "You named 3 valid
+differentials — the question only required 3, so that's full credit. Other
+acceptable answers: ..."
+
+WORKED EXAMPLE:
+  Question: "Give 3 differential diagnoses for shoulder pain."
+  Ideal answer: "Mention any 3 of the following: impingement, rotator cuff
+  pathology, frozen shoulder, AC joint OA, cervical radiculopathy,
+  glenohumeral OA."
+  Student: "Impingement, rotator cuff pathology, and frozen shoulder."
+  → Quantifier N=3. Covered=3. score=1.0. Feedback notes other valid options.
+  WRONG: 0.5 (would penalise the student for not naming alternatives that
+  weren't required).
+
+Respond with ONLY JSON in this exact shape:
+{
+  "quantifier": { "detected": true|false, "threshold": <integer or 0> },
+  "score": <number 0.0-1.0>,
+  "feedback": "<2-3 sentences>"
+}`;
 
   try {
     const completion = await openai.chat.completions.create({
@@ -317,6 +423,22 @@ HOW TO GRADE (read carefully):
    - 0.0: the transcript shows NO relevant content for this question at all — student was silent, said "I don't know", or talked about an unrelated topic.
 
 5. DO NOT SCORE 0 JUST BECAUSE THE STUDENT DIDN'T USE THE EXACT JARGON FROM THE IDEAL ANSWER. If they described the concept in their own words correctly, that is a PASSING answer.
+
+5a. SELECT-N-OF-K QUANTIFIERS — VERY IMPORTANT.
+   Scan each question and its ideal answer for a directive like "Give 3
+   differentials", "Mention any 3 of the following", "List at least two", "Name
+   two of the following", "Choose 2 from the list". If found, extract the
+   threshold N. The listed items are ALTERNATIVES, not cumulative requirements:
+     - covered ≥ N → score = 1.0 (full credit). Do NOT penalise for omitted
+       alternatives — they were never required.
+     - covered < N → score = covered / N.
+   In feedback, name the alternatives the student could also have given so
+   they understand why the score is high despite a partial-looking transcript.
+   If both the question and the ideal answer specify a number and they
+   conflict, trust the lower one (more lenient to the student).
+
+   Example: Question "Give 3 differentials for a systolic murmur." Ideal
+   lists 6. Student names 3 valid ones → 1.0 (NOT 0.5).
 
 6. WORKED EXAMPLE:
    Question: "What is your differential diagnosis for this murmur?"
