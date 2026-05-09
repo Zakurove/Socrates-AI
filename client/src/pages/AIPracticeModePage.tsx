@@ -667,14 +667,25 @@ export default function AIPracticeModePage() {
       }
 
       // Update session — persist the full cumulative transcript so future
-      // false-positive / false-negative reports are auditable.
+      // false-positive / false-negative reports are auditable. Combine the
+      // narration transcript with the examiner-phase Gemini turns so we
+      // never lose the answer audit trail when evaluator says "no student
+      // audio captured."
+      const narrationPart = (narration.transcript ?? "").trim();
+      const examinerPart = (gemini.fullTranscript ?? "").trim();
+      const combinedTranscript = [
+        narrationPart ? `=== NARRATION ===\n${narrationPart}` : "",
+        examinerPart ? `=== EXAMINER ===\n${examinerPart}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
       await updateSession.mutateAsync({
         id: sid,
         data: {
           endedAt: new Date().toISOString(),
           totalScore,
           timeUsedSeconds: elapsedSeconds,
-          transcript: narration.transcript || undefined,
+          transcript: combinedTranscript || undefined,
         },
       });
 

@@ -382,6 +382,24 @@ export async function evaluateExaminerTranscript(
     }));
   }
 
+  // Sanity check: warn loudly when the transcript has AI lines but no
+  // Student lines. This is the Gemini Live "input transcription returned
+  // nothing" failure mode that produced session 5's empty examiner result.
+  // Logging in prod so we can correlate with server timestamps if it
+  // recurs and the user reports it.
+  const studentLineCount = transcript
+    .split("\n")
+    .filter((l) => l.startsWith("Student:")).length;
+  const aiLineCount = transcript
+    .split("\n")
+    .filter((l) => l.startsWith("AI:")).length;
+  if (studentLineCount === 0 && aiLineCount > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[examiner-evaluator] no Student: lines in transcript (ai_lines=${aiLineCount}, total_chars=${transcript.length}). Gemini Live input transcription likely returned no text for this session. First 300 chars: ${JSON.stringify(transcript.slice(0, 300))}`,
+    );
+  }
+
   const questionBlock = questions
     .map((q, i) => {
       const kp =
