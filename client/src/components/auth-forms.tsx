@@ -218,7 +218,7 @@ export function LoginForm({ isPending }: { isPending: boolean }) {
           id="login-email"
           type="email"
           inputMode="email"
-          autoComplete="email"
+          autoComplete="username"
           placeholder="you@medical.edu"
           aria-invalid={!!errors.email}
           {...register("email")}
@@ -310,7 +310,7 @@ export function RegisterForm({ isPending }: { isPending: boolean }) {
           id="reg-email"
           type="email"
           inputMode="email"
-          autoComplete="email"
+          autoComplete="username"
           placeholder="you@medical.edu"
           aria-invalid={!!errors.email}
           {...register("email")}
