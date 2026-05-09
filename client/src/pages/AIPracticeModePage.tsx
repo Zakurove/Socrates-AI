@@ -963,24 +963,34 @@ export default function AIPracticeModePage() {
 
     return (
       <div className="flex h-screen flex-col bg-background">
-        {/* Timer — single calm top bar. Amber dot if a chunk upload failed
-            (silent, non-fatal reassurance — no toast). */}
-        <div className="px-5 pt-4 pb-3">
-          <div className="relative">
-            <SessionTimerRing
-              totalSeconds={totalSeconds}
-              elapsedSeconds={elapsedSeconds}
-              hidden={timerVisibility.hidden}
-              onToggleHide={timerVisibility.toggle}
-            />
-            {narration.chunkError && (
-              <span
-                aria-label="Reconnecting"
-                title="Reconnecting\u2026"
-                className="absolute left-0 top-0 h-1.5 w-1.5 -translate-x-2 translate-y-0.5 rounded-full bg-brand-accent"
-              />
+        {/* Top strip — compact listening indicator. The timer below is the
+            hero. Amber dot if a chunk upload failed (silent, non-fatal
+            reassurance — no toast). */}
+        <div className="flex items-center justify-center gap-2 px-5 pt-6 pb-2">
+          <span className="relative inline-flex h-2 w-2" aria-hidden>
+            {!isListenMuted && narration.isListening && (
+              <span className="absolute inset-0 animate-ping rounded-full bg-success/60" />
             )}
-          </div>
+            <span
+              className={cn(
+                "relative inline-flex h-2 w-2 rounded-full",
+                isListenMuted
+                  ? "bg-muted-foreground"
+                  : narration.isTranscribing
+                    ? "bg-brand-accent"
+                    : "bg-success",
+              )}
+            />
+          </span>
+          <span className="text-[11px] font-bold uppercase tracking-[0.22em] text-muted-foreground">
+            {statusLabel}
+          </span>
+          {narration.chunkError && (
+            <span
+              aria-label="Reconnecting"
+              className="ml-2 h-1.5 w-1.5 rounded-full bg-brand-accent"
+            />
+          )}
         </div>
 
         {/* Optional reference image (for image_id stations) — kept small and
@@ -1001,20 +1011,19 @@ export default function AIPracticeModePage() {
           </div>
         )}
 
-        {/* Hero — single commanding mic indicator. Nothing else. */}
+        {/* Hero — the timer is now the centerpiece. Practising the pace is
+            what the user is here for; the mic state lives in the small
+            top strip. */}
         <div className="flex flex-1 flex-col items-center justify-center gap-6 px-5">
-          <MicButton
-            state="listening"
-            analyser={isListenMuted ? null : narration.analyser}
+          <SessionTimerRing
+            totalSeconds={totalSeconds}
+            elapsedSeconds={elapsedSeconds}
+            hidden={timerVisibility.hidden}
+            onToggleHide={timerVisibility.toggle}
           />
-          <div className="flex flex-col items-center gap-1.5 text-center">
-            <span className="text-caption text-muted-foreground">
-              {statusLabel}
-            </span>
-            <p className="text-body text-muted-foreground">
-              Speak naturally. We're listening.
-            </p>
-          </div>
+          <p className="text-body text-muted-foreground text-center max-w-xs">
+            Speak naturally. We're listening.
+          </p>
         </div>
 
         {/* Bottom — a single primary action + a quiet mute toggle. */}
