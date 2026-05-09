@@ -262,6 +262,31 @@ export default function MockExamDetailPage() {
             {totalMinutes}m · {modeLabel(exam.practiceMode)} ·{" "}
             {exam.restSeconds}s rest
           </p>
+          {/* Desktop-only inline Start CTA (mobile uses the fixed bottom bar). */}
+          <div className="hidden lg:flex lg:flex-wrap lg:gap-2 lg:pt-4">
+            {inProgress && (
+              <Button
+                variant="outline"
+                onClick={() => handleResumeAttempt(inProgress)}
+                className="rounded-full h-11 px-5 text-[14px] font-semibold gap-2"
+              >
+                <Play className="h-4 w-4" />
+                Resume attempt #{inProgress.attemptNumber}
+              </Button>
+            )}
+            <Button
+              onClick={handleStartNewAttempt}
+              disabled={createAttempt.isPending || totalStations === 0}
+              className="rounded-full h-11 px-6 text-[15px] font-semibold gap-2"
+            >
+              {createAttempt.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4" />
+              )}
+              {attemptCount === 0 ? "Start mock exam" : "Start new attempt"}
+            </Button>
+          </div>
         </header>
 
         {/* Stats row */}
@@ -383,8 +408,9 @@ export default function MockExamDetailPage() {
         </section>
       </div>
 
-      {/* Sticky bottom CTA */}
-      <div className="fixed bottom-0 inset-x-0 z-20 backdrop-blur-xl bg-background/80 border-t border-border/40 safe-bottom">
+      {/* Sticky bottom CTA — hidden at lg+; the desktop layout shows
+          Start/Resume buttons inline within the page content. */}
+      <div className="fixed bottom-0 inset-x-0 z-20 lg:hidden backdrop-blur-xl bg-background/80 border-t border-border/40 safe-bottom">
         <div className="px-5 py-4 space-y-2">
           {inProgress && (
             <Button

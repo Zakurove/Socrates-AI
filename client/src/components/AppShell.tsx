@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { BottomNav } from "@/components/BottomNav";
 import { SideNav } from "@/components/SideNav";
 import { EmailVerificationBanner } from "@/components/EmailVerificationBanner";
-import { shouldHideBottomNav } from "@/lib/navigation";
+import { shouldHideBottomNav, shouldHideSideNav } from "@/lib/navigation";
 
 /**
  * Owns the responsive layout decision. Branches:
@@ -37,7 +37,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  if (shouldHideBottomNav(location)) {
+  // True immersive runners / editors / auth: no SideNav at any size. The
+  // BottomNav is also hidden (these routes own their own viewport).
+  if (shouldHideSideNav(location)) {
     return (
       <div className="app-backdrop min-h-screen w-full">
         <div className="phone-frame relative mx-auto w-full max-w-[440px] min-h-screen overflow-x-clip bg-background lg:max-w-screen-xl lg:overflow-visible lg:shadow-none">
@@ -47,6 +49,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
+  // Default + "keep-sidenav-but-hide-bottomnav" routes share this branch. The
+  // BottomNav is rendered conditionally so detail/browse pages with their own
+  // bottom CTA don't double up on mobile.
+  const hideBottomNav = shouldHideBottomNav(location);
   return (
     <div className="app-backdrop min-h-screen w-full">
       <div className="lg:flex lg:min-h-screen">
@@ -56,7 +62,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {children}
         </div>
       </div>
-      <BottomNav />
+      {!hideBottomNav && <BottomNav />}
     </div>
   );
 }

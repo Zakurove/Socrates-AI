@@ -176,7 +176,7 @@ export default function ResultsPage() {
     <div className="min-h-screen bg-background pb-10">
       <PageHeader title="Results" backTo={backTo} />
 
-      <div className="mx-auto max-w-2xl px-5 pt-6 space-y-8">
+      <div className="mx-auto max-w-2xl lg:max-w-4xl px-5 pt-6 space-y-8">
         {/* Hero — Score gauge */}
         <motion.section
           initial={{ opacity: 0, y: 12 }}

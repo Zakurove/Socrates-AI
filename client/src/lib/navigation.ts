@@ -81,21 +81,44 @@ export function safeFrom(from: string | null | undefined, fallback: string): str
  * editors, auth, and the invite-accept landing should own the whole
  * viewport.
  */
+// Truly-immersive routes: full viewport, no nav. These are practice runners,
+// editors, and the auth shell. Detail / browse pages (station detail, mock
+// exam detail, public station/collection, results) are NOT immersive — they
+// keep the SideNav at lg+ so users can navigate while reading. They still
+// hide the BottomNav at <lg because they own their own bottom CTA, but the
+// desktop sidebar is always visible.
 const HIDE_BOTTOM_NAV_PATTERNS: RegExp[] = [
   /^\/auth(\/.*)?$/,
   /^\/invites\/.+$/,
   /^\/station\/new$/,
-  /^\/station\/\d+$/, // station detail — has its own Practice CTA at bottom
   /^\/station\/\d+\/edit$/,
   /^\/station\/\d+\/practice$/,
   /^\/station\/\d+\/ai-practice$/,
   /^\/mock-exam\/new$/,
-  /^\/mock-exam\/\d+$/, // runner (not /mock-exams/:id — note singular)
-  /^\/mock-exams\/\d+$/, // mock exam detail — has its own Start CTA at bottom
-  /^\/library\/stations\/\d+$/, // public station — has its own Fork CTA
-  /^\/library\/collections\/\d+$/, // public collection — has its own Fork CTA
+  /^\/mock-exam\/\d+$/, // runner (singular path = active session)
+];
+
+// Routes that keep the SideNav at lg+ but still hide the BottomNav at <lg
+// (because they own their own bottom CTA on mobile). At desktop they look
+// like regular content pages.
+const HIDE_BOTTOM_NAV_KEEP_SIDENAV_PATTERNS: RegExp[] = [
+  /^\/station\/\d+$/,
+  /^\/mock-exams\/\d+$/,
+  /^\/library\/stations\/\d+$/,
+  /^\/library\/collections\/\d+$/,
 ];
 
 export function shouldHideBottomNav(pathname: string): boolean {
+  return (
+    HIDE_BOTTOM_NAV_PATTERNS.some((r) => r.test(pathname)) ||
+    HIDE_BOTTOM_NAV_KEEP_SIDENAV_PATTERNS.some((r) => r.test(pathname))
+  );
+}
+
+/**
+ * Is this an immersive runner / editor / auth route — i.e. the SideNav must
+ * also be hidden at lg+? Subset of `shouldHideBottomNav`.
+ */
+export function shouldHideSideNav(pathname: string): boolean {
   return HIDE_BOTTOM_NAV_PATTERNS.some((r) => r.test(pathname));
 }

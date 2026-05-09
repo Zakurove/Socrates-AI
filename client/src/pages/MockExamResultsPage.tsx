@@ -161,7 +161,7 @@ export default function MockExamResultsPage() {
         backTo={`/mock-exams/${examId}`}
       />
 
-      <div className="mx-auto max-w-2xl px-5 pt-6 space-y-8">
+      <div className="mx-auto max-w-2xl lg:max-w-4xl px-5 pt-6 space-y-8">
         {/* Hero */}
         <motion.section
           initial={{ opacity: 0, y: 12 }}

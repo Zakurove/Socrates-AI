@@ -675,9 +675,11 @@ export default function PublicStationPage() {
         </footer>
       </main>
 
-      {/* Sticky fork CTA — hidden for owners (who already have the station) */}
+      {/* Sticky fork CTA — hidden for owners (who already have the station).
+          Hidden at lg+: an inline ForkButton already exists in the page
+          header, and the fixed bar would overlap the variable-width SideNav. */}
       {!isOwner && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-border/40 bg-background/80 px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))] backdrop-blur-xl">
+        <div className="fixed bottom-0 left-0 right-0 z-40 lg:hidden border-t border-border/40 bg-background/80 px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))] backdrop-blur-xl">
           <div className="mx-auto w-full max-w-[960px]">
             <ForkButton
               target={{ type: "station", id: station.id }}

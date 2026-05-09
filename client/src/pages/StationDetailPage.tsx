@@ -376,7 +376,7 @@ export default function StationDetailPage() {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
-        <div className="mx-auto max-w-[440px] px-5 py-6 safe-top">
+        <div className="mx-auto max-w-[440px] lg:max-w-3xl px-5 py-6 safe-top">
           <div className="mb-4 h-4 w-24 animate-pulse rounded bg-warm-100" />
           <div className="mb-2 h-8 w-2/3 animate-pulse rounded bg-warm-100" />
           <div className="mb-6 h-3 w-1/2 animate-pulse rounded bg-warm-100" />
@@ -518,7 +518,7 @@ export default function StationDetailPage() {
       />
 
       {/* Main content */}
-      <main className="mx-auto max-w-[440px] px-5 pt-6">
+      <main className="mx-auto max-w-[440px] lg:max-w-3xl px-5 pt-6">
         <motion.header
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
@@ -554,6 +554,17 @@ export default function StationDetailPage() {
               />
             </div>
           )}
+          {/* Desktop-only inline Practice CTA. The mobile fixed-bottom bar
+              is hidden at lg+ to avoid overlapping the SideNav. */}
+          <div className="mt-6 hidden lg:block">
+            <Button
+              onClick={() => setShowPracticeSheet(true)}
+              className="h-12 gap-2 rounded-full bg-primary px-6 text-primary-foreground text-[15px] font-semibold shadow-md transition-transform active:scale-[0.98]"
+            >
+              <Play className="h-4 w-4" />
+              Practice
+            </Button>
+          </div>
         </motion.header>
 
         {/* Reference image (for image_id stations etc.) */}
@@ -804,10 +815,12 @@ export default function StationDetailPage() {
         </section>
       </main>
 
-      {/* Fixed bottom Practice CTA */}
+      {/* Mobile fixed bottom Practice CTA. Hidden at lg+ to avoid
+          overlapping the variable-width SideNav; the desktop layout
+          renders an inline Practice button in the page header instead. */}
       <div
         className={cn(
-          "fixed bottom-0 left-0 right-0 z-40",
+          "fixed bottom-0 left-0 right-0 z-40 lg:hidden",
           "backdrop-blur-xl bg-background/80 border-t border-border/40",
           "px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))]",
         )}
