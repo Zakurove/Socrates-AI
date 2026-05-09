@@ -49,24 +49,18 @@ export function SessionTimerRing({
   const overBy = isOver ? -remaining : 0;
   const progress = Math.min(Math.max(elapsedSeconds / totalSeconds, 0), 1);
 
-  // Same palette as TimerBar / ReadingPhase: primary → amber → emerald.
-  const ringColor = isOver
-    ? "text-brand-accent"
-    : progress >= 0.85
-      ? "text-success"
-      : progress >= 0.6
-        ? "text-brand-accent"
-        : "text-primary";
+  // Calm palette mirroring the pre-session reading ring: amber by default,
+  // emerald in the final stretch, amber again when overtime kicks in.
+  const ringColor =
+    progress >= 0.85 && !isOver ? "text-success" : "text-brand-accent";
   const textColor = isOver
     ? "text-brand-accent"
     : progress >= 0.85
       ? "text-success"
-      : progress >= 0.6
-        ? "text-brand-accent"
-        : "text-foreground";
+      : "text-foreground";
 
-  // SVG geometry — compact for sticky-top header.
-  const ringSize = 88;
+  // Match the pre-session reading ring exactly: 160px ring + 6px stroke.
+  const ringSize = 160;
   const stroke = 6;
   const radius = (ringSize - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -75,12 +69,11 @@ export function SessionTimerRing({
   const dashOffset = circumference * (1 - fillFraction);
 
   const centerText = isOver ? `+${formatTime(overBy)}` : formatTime(Math.max(remaining, 0));
-  const labelText = isOver ? "Over time" : "Remaining";
 
   return (
-    <div className={cn("flex flex-col items-center gap-1.5", className)}>
+    <div className={cn("flex flex-col items-center gap-2", className)}>
       <div
-        className="relative"
+        className="relative flex items-center justify-center"
         style={{ width: ringSize, height: ringSize }}
         role="timer"
         aria-live="off"
@@ -99,7 +92,7 @@ export function SessionTimerRing({
             r={radius}
             stroke="currentColor"
             strokeWidth={stroke}
-            className="text-border/40"
+            className="text-border/50"
             fill="none"
           />
           <circle
@@ -108,37 +101,35 @@ export function SessionTimerRing({
             r={radius}
             stroke="currentColor"
             strokeWidth={stroke}
-            className={cn("transition-[stroke-dashoffset,color] duration-700 ease-linear", ringColor)}
+            className={cn(
+              "transition-[stroke-dashoffset,color] duration-700 ease-linear",
+              ringColor,
+            )}
             fill="none"
             strokeLinecap="round"
             strokeDasharray={circumference}
             strokeDashoffset={dashOffset}
           />
         </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <span
-            className={cn(
-              "font-display font-semibold tabular-nums leading-none",
-              isOver ? "text-[20px]" : "text-[22px]",
-              textColor,
-            )}
-          >
-            {centerText}
-          </span>
-          <span className="mt-1 text-[9px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-            {labelText}
-          </span>
-        </div>
+        <p
+          className={cn(
+            "absolute font-display font-semibold leading-none tabular-nums",
+            isOver ? "text-[34px]" : "text-[40px]",
+            textColor,
+          )}
+        >
+          {centerText}
+        </p>
       </div>
 
       {onToggleHide && (
         <button
           type="button"
           onClick={onToggleHide}
-          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
           aria-label="Hide timer"
         >
-          <EyeOff className="h-3 w-3" aria-hidden />
+          <EyeOff className="h-3.5 w-3.5" aria-hidden />
           Hide timer
         </button>
       )}
