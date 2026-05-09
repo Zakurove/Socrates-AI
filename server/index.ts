@@ -64,6 +64,11 @@ app.use(
             ],
           },
         },
+    // YouTube returns "Error 153 — player configuration error" when the
+    // embedding page strips the Referer header (helmet's default no-referrer).
+    // Send origin only on cross-origin requests so YouTube can verify embed
+    // eligibility without leaking full URLs.
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
   }),
 );
 
