@@ -1263,6 +1263,40 @@ export default function StationEditorPage() {
     []
   );
 
+  const reorderSubSubItemsInSubItem = useCallback(
+    (
+      sectionId: string,
+      itemId: string,
+      subItemId: string,
+      activeId: string,
+      overId: string,
+    ) => {
+      setSections((prev) =>
+        prev.map((s) => {
+          if (s.id !== sectionId) return s;
+          return {
+            ...s,
+            items: s.items.map((i) => {
+              if (i.id !== itemId) return i;
+              return {
+                ...i,
+                subItems: i.subItems.map((si) => {
+                  if (si.id !== subItemId) return si;
+                  const subSubs = si.subItems ?? [];
+                  const oldIdx = subSubs.findIndex((ss) => ss.id === activeId);
+                  const newIdx = subSubs.findIndex((ss) => ss.id === overId);
+                  if (oldIdx < 0 || newIdx < 0) return si;
+                  return { ...si, subItems: arrayMove(subSubs, oldIdx, newIdx) };
+                }),
+              };
+            }),
+          };
+        }),
+      );
+    },
+    [],
+  );
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -2023,22 +2057,31 @@ export default function StationEditorPage() {
                             collisionDetection={closestCenter}
                             onDragEnd={(e: DragEndEvent) => {
                               const dx = e.delta?.x ?? 0;
-                              // Reorder first (if any), then apply indent on the dropped item.
+                              const dy = e.delta?.y ?? 0;
                               const activeId = String(e.active.id);
+                              // Decide reorder vs re-level by gesture
+                              // direction. A drag is treated as a re-level
+                              // only when it was primarily horizontal AND
+                              // crossed the threshold; otherwise it's a
+                              // reorder. Previously both fired, so any
+                              // vertical drag with a touch of rightward
+                              // drift would silently re-level on top of the
+                              // reorder.
+                              const isRelevel =
+                                Math.abs(dx) > Math.abs(dy) &&
+                                dx >= INDENT_THRESHOLD_PX;
+                              if (isRelevel) {
+                                setTimeout(
+                                  () => indentItem(section.id, activeId),
+                                  0,
+                                );
+                                return;
+                              }
                               if (e.over && e.active.id !== e.over.id) {
                                 reorderItemsInSection(
                                   section.id,
                                   activeId,
-                                  String(e.over.id)
-                                );
-                              }
-                              // Horizontal drag: right >= +24 => indent (item -> sub-item).
-                              // Outdent at item-level is a no-op (already top).
-                              if (dx >= INDENT_THRESHOLD_PX) {
-                                // Defer until after reorder state commit.
-                                setTimeout(
-                                  () => indentItem(section.id, activeId),
-                                  0
+                                  String(e.over.id),
                                 );
                               }
                             }}
@@ -2112,6 +2155,19 @@ export default function StationEditorPage() {
                                         item.id,
                                         subId,
                                         ssubId
+                                      )
+                                    }
+                                    onReorderSubSubItems={(
+                                      subId,
+                                      activeId,
+                                      overId,
+                                    ) =>
+                                      reorderSubSubItemsInSubItem(
+                                        section.id,
+                                        item.id,
+                                        subId,
+                                        activeId,
+                                        overId,
                                       )
                                     }
                                   />
@@ -3124,6 +3180,7 @@ function ItemRow({
   onSubSubItemContentChange,
   onSubSubItemDelete,
   onSubSubItemOutdent,
+  onReorderSubSubItems,
 }: {
   item: EditorItem;
   itemIndex: number;
@@ -3147,6 +3204,11 @@ function ItemRow({
   onSubSubItemContentChange: (subId: string, ssubId: string, patch: Partial<LearningContent>) => void;
   onSubSubItemDelete: (subId: string, ssubId: string) => void;
   onSubSubItemOutdent: (subId: string, ssubId: string) => void;
+  onReorderSubSubItems: (
+    subId: string,
+    activeId: string,
+    overId: string,
+  ) => void;
 }) {
   const [drawer, setDrawer] = useState<DrawerKind>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -3194,15 +3256,24 @@ function ItemRow({
                 collisionDetection={closestCenter}
                 onDragEnd={(e: DragEndEvent) => {
                   const dx = e.delta?.x ?? 0;
+                  const dy = e.delta?.y ?? 0;
                   const activeId = String(e.active.id);
+                  // Re-level only when the drag was primarily horizontal;
+                  // otherwise treat as a vertical reorder. Avoids the
+                  // "I tried to drag down and it outdented" footgun.
+                  const isRelevel =
+                    Math.abs(dx) > Math.abs(dy) &&
+                    Math.abs(dx) >= INDENT_THRESHOLD_PX;
+                  if (isRelevel) {
+                    if (dx >= INDENT_THRESHOLD_PX) {
+                      setTimeout(() => onSubItemIndent(activeId), 0);
+                    } else if (dx <= -INDENT_THRESHOLD_PX) {
+                      setTimeout(() => onSubItemOutdent(activeId), 0);
+                    }
+                    return;
+                  }
                   if (e.over && e.active.id !== e.over.id) {
                     onReorderSubItems(activeId, String(e.over.id));
-                  }
-                  // Horizontal delta => change depth for the sub-item.
-                  if (dx >= INDENT_THRESHOLD_PX) {
-                    setTimeout(() => onSubItemIndent(activeId), 0);
-                  } else if (dx <= -INDENT_THRESHOLD_PX) {
-                    setTimeout(() => onSubItemOutdent(activeId), 0);
                   }
                 }}
               >
@@ -3226,6 +3297,9 @@ function ItemRow({
                           onSubSubItemContentChange={(ssubId, patch) => onSubSubItemContentChange(sub.id, ssubId, patch)}
                           onSubSubItemDelete={(ssubId) => onSubSubItemDelete(sub.id, ssubId)}
                           onSubSubItemOutdent={(ssubId) => onSubSubItemOutdent(sub.id, ssubId)}
+                          onReorderSubSubItems={(activeId, overId) =>
+                            onReorderSubSubItems(sub.id, activeId, overId)
+                          }
                         />
                       )}
                     </SortableItem>
@@ -3330,6 +3404,7 @@ function SubItemRow({
   onSubSubItemContentChange,
   onSubSubItemDelete,
   onSubSubItemOutdent,
+  onReorderSubSubItems,
 }: {
   sub: EditorSubItem;
   dragHandle: { [key: string]: any };
@@ -3343,6 +3418,7 @@ function SubItemRow({
   onSubSubItemContentChange: (ssubId: string, patch: Partial<LearningContent>) => void;
   onSubSubItemDelete: (ssubId: string) => void;
   onSubSubItemOutdent: (ssubId: string) => void;
+  onReorderSubSubItems: (activeId: string, overId: string) => void;
 }) {
   const [drawer, setDrawer] = useState<DrawerKind>(null);
   const toggle = (kind: Exclude<DrawerKind, null>) =>
@@ -3423,13 +3499,21 @@ function SubItemRow({
                 collisionDetection={closestCenter}
                 onDragEnd={(e: DragEndEvent) => {
                   const dx = e.delta?.x ?? 0;
+                  const dy = e.delta?.y ?? 0;
                   const activeId = String(e.active.id);
-                  // Drag-left => outdent sub-sub -> sub-item.
-                  // (No reorder handler wired at sub-sub level yet; vertical
-                  // drag is effectively a no-op here. Keyboard/menu still
-                  // work via onOutdent on the sub-item above for depth 2.)
-                  if (dx <= -INDENT_THRESHOLD_PX) {
+                  // Re-level only when drag was primarily horizontal AND
+                  // beyond the threshold; otherwise reorder within the
+                  // sub-item's children. There is no further depth, so
+                  // dx >= +threshold is a no-op (can't go deeper).
+                  const isOutdent =
+                    Math.abs(dx) > Math.abs(dy) &&
+                    dx <= -INDENT_THRESHOLD_PX;
+                  if (isOutdent) {
                     setTimeout(() => onSubSubItemOutdent(activeId), 0);
+                    return;
+                  }
+                  if (e.over && e.active.id !== e.over.id) {
+                    onReorderSubSubItems(activeId, String(e.over.id));
                   }
                 }}
               >
