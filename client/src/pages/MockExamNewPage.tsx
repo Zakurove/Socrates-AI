@@ -464,10 +464,47 @@ export default function MockExamNewPage() {
             </div>
           </div>
         )}
+
+        {/* Desktop-only inline CTA — mobile uses the fixed bar below. */}
+        <div className="hidden lg:flex lg:pt-2">
+          {step < 4 ? (
+            <Button
+              disabled={
+                (step === 1 && !canAdvanceFrom1) ||
+                (step === 2 && !canAdvanceFrom2) ||
+                (step === 3 && !canAdvanceFrom3)
+              }
+              onClick={() => setStep((s) => (s + 1) as Step)}
+              className="rounded-full h-11 px-6 text-[15px] font-semibold gap-2"
+            >
+              Continue
+              {step === 1 && orderedIds.length > 0 && (
+                <span className="text-[13px] opacity-80 tabular-nums">
+                  ({orderedIds.length} selected)
+                </span>
+              )}
+            </Button>
+          ) : (
+            <Button
+              disabled={!canSubmit}
+              onClick={onCreateAndStart}
+              className="rounded-full h-11 px-6 text-[15px] font-semibold gap-2"
+            >
+              {createMutation.isPending || createAttempt.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4" />
+              )}
+              Create &amp; start
+            </Button>
+          )}
+        </div>
       </div>
 
-      {/* Sticky footer CTA */}
-      <div className="fixed bottom-0 inset-x-0 z-20 backdrop-blur-xl bg-background/80 border-t border-border/40 safe-bottom">
+      {/* Sticky footer CTA — hidden at lg+ to avoid overlapping the
+          SideNav. The desktop layout puts a Continue/Create button inline
+          at the bottom of each step's content. */}
+      <div className="fixed bottom-0 inset-x-0 z-20 lg:hidden backdrop-blur-xl bg-background/80 border-t border-border/40 safe-bottom">
         <div className="px-5 py-4">
           {step < 4 ? (
             <Button

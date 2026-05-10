@@ -90,19 +90,19 @@ export function safeFrom(from: string | null | undefined, fallback: string): str
 const HIDE_BOTTOM_NAV_PATTERNS: RegExp[] = [
   /^\/auth(\/.*)?$/,
   /^\/invites\/.+$/,
-  /^\/station\/new$/,
-  /^\/station\/\d+\/edit$/,
   /^\/station\/\d+\/practice$/,
   /^\/station\/\d+\/ai-practice$/,
-  /^\/mock-exam\/new$/,
   /^\/mock-exam\/\d+$/, // runner (singular path = active session)
 ];
 
 // Routes that keep the SideNav at lg+ but still hide the BottomNav at <lg
-// (because they own their own bottom CTA on mobile). At desktop they look
-// like regular content pages.
+// (because they own their own bottom CTA / save bar on mobile). At desktop
+// they look like regular content pages with the sidebar.
 const HIDE_BOTTOM_NAV_KEEP_SIDENAV_PATTERNS: RegExp[] = [
+  /^\/station\/new$/,
+  /^\/station\/\d+\/edit$/,
   /^\/station\/\d+$/,
+  /^\/mock-exam\/new$/,
   /^\/mock-exams\/\d+$/,
   /^\/library\/stations\/\d+$/,
   /^\/library\/collections\/\d+$/,
