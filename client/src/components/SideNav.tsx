@@ -57,7 +57,7 @@ export function SideNav() {
           <img
             src="/brand/icon.png"
             alt="Socrates AI"
-            className="h-11 w-11 shrink-0 rounded-xl"
+            className="h-12 w-12 shrink-0 rounded-xl"
           />
         ) : (
           <div className="min-w-0 flex-1 leading-tight">
@@ -65,7 +65,7 @@ export function SideNav() {
               <img
                 src="/brand/logo.png"
                 alt="Socrates AI"
-                className="h-10 w-auto shrink-0"
+                className="h-14 w-auto shrink-0"
               />
               <AlphaBadge />
             </div>
