@@ -40,6 +40,7 @@ const PublicStationPage = lazy(() => import("@/pages/PublicStationPage"));
 const PublicCollectionPage = lazy(() => import("@/pages/PublicCollectionPage"));
 const AuthorProfilePage = lazy(() => import("@/pages/AuthorProfilePage"));
 const AdminReportsPage = lazy(() => import("@/pages/AdminReportsPage"));
+const AdminCorrectionsPage = lazy(() => import("@/pages/AdminCorrectionsPage"));
 
 function PageLoader() {
   return (
@@ -112,6 +113,11 @@ function AppRoutes() {
           <Route path="/admin/reports">
             <ProtectedRoute>
               <AdminReportsPage />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/admin/corrections">
+            <ProtectedRoute>
+              <AdminCorrectionsPage />
             </ProtectedRoute>
           </Route>
 

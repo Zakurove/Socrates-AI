@@ -322,8 +322,14 @@ export const itemResults = pgTable("item_results", {
     .notNull()
     .references(() => items.id, { onDelete: "cascade" }),
   status: itemStatusEnum("status").notNull(),
+  // Frozen at save time. Lets us tell the user's view (`status`) apart
+  // from the matcher's original answer. A row is "corrected" iff
+  // status != ai_status. NOT NULL after migration 0014's backfill.
+  aiStatus: itemStatusEnum("ai_status").notNull(),
   matchedTranscript: text("matched_transcript"),
   timestampSeconds: integer("timestamp_seconds"),
+  correctedAt: timestamp("corrected_at"),
+  correctionNote: text("correction_note"),
 });
 
 // ============ EXAMINER QUESTION RESULTS ============
@@ -338,7 +344,36 @@ export const examinerQuestionResults = pgTable("examiner_question_results", {
     .references(() => examinerQuestions.id, { onDelete: "cascade" }),
   userAnswerTranscript: text("user_answer_transcript"),
   score: real("score"), // 0.0 to 1.0
+  // Frozen at save time — mirror of `score` at the moment of grading.
+  // Stays null if the examiner phase never ran.
+  aiScore: real("ai_score"),
   feedback: text("feedback"),
+  correctedAt: timestamp("corrected_at"),
+  correctionNote: text("correction_note"),
+});
+
+// ============ CORRECTION EVENTS (audit log) ============
+
+export const correctionTargetEnum = pgEnum("correction_target", [
+  "item_result",
+  "question_result",
+]);
+
+export const correctionEvents = pgTable("correction_events", {
+  id: serial("id").primaryKey(),
+  sessionId: integer("session_id")
+    .notNull()
+    .references(() => sessions.id, { onDelete: "cascade" }),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  targetType: correctionTargetEnum("target_type").notNull(),
+  targetId: integer("target_id").notNull(),
+  aiValue: text("ai_value").notNull(),
+  fromValue: text("from_value").notNull(),
+  toValue: text("to_value").notNull(),
+  note: text("note"),
+  occurredAt: timestamp("occurred_at").defaultNow().notNull(),
 });
 
 // ============ MOCK EXAMS ============

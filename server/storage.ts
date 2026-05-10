@@ -20,6 +20,7 @@ import {
   sessions,
   itemResults,
   examinerQuestionResults,
+  correctionEvents,
   type User,
   type InsertUser,
   type Station,
@@ -199,6 +200,18 @@ export interface IStorage {
     rows: Omit<ItemResult, "id">[],
   ): Promise<ItemResult[]>;
   getItemResultsBySession(sessionId: number): Promise<ItemResult[]>;
+  getItemResult(
+    id: number,
+  ): Promise<
+    | (ItemResult & {
+        item: Item & { subItems: Item[] };
+      })
+    | undefined
+  >;
+  updateItemResult(
+    id: number,
+    patch: Partial<ItemResult>,
+  ): Promise<ItemResult>;
 
   // Examiner Question Results
   createExaminerQuestionResult(
@@ -210,6 +223,25 @@ export interface IStorage {
   getExaminerQuestionResultsBySession(
     sessionId: number,
   ): Promise<ExaminerQuestionResult[]>;
+  getExaminerQuestionResult(
+    id: number,
+  ): Promise<ExaminerQuestionResult | undefined>;
+  updateExaminerQuestionResult(
+    id: number,
+    patch: Partial<ExaminerQuestionResult>,
+  ): Promise<ExaminerQuestionResult>;
+
+  // Corrections audit log
+  insertCorrectionEvent(event: {
+    sessionId: number;
+    userId: number;
+    targetType: "item_result" | "question_result";
+    targetId: number;
+    aiValue: string;
+    fromValue: string;
+    toValue: string;
+    note?: string | null;
+  }): Promise<typeof correctionEvents.$inferSelect>;
 
   // ─── Community Library ─────────────────────────────────
 
@@ -1218,6 +1250,35 @@ class DatabaseStorage implements IStorage {
       .where(eq(itemResults.sessionId, sessionId));
   }
 
+  async getItemResult(
+    id: number,
+  ): Promise<
+    | (ItemResult & { item: Item & { subItems: Item[] } })
+    | undefined
+  > {
+    const row = await db.query.itemResults.findFirst({
+      where: eq(itemResults.id, id),
+      with: {
+        item: {
+          with: { subItems: true },
+        },
+      },
+    });
+    return row as any;
+  }
+
+  async updateItemResult(
+    id: number,
+    patch: Partial<ItemResult>,
+  ): Promise<ItemResult> {
+    const [updated] = await db
+      .update(itemResults)
+      .set(patch)
+      .where(eq(itemResults.id, id))
+      .returning();
+    return updated;
+  }
+
   // ─── Examiner Question Results ──────────────────────────
 
   async createExaminerQuestionResult(
@@ -1245,6 +1306,56 @@ class DatabaseStorage implements IStorage {
       .select()
       .from(examinerQuestionResults)
       .where(eq(examinerQuestionResults.sessionId, sessionId));
+  }
+
+  async getExaminerQuestionResult(
+    id: number,
+  ): Promise<ExaminerQuestionResult | undefined> {
+    const [row] = await db
+      .select()
+      .from(examinerQuestionResults)
+      .where(eq(examinerQuestionResults.id, id));
+    return row;
+  }
+
+  async updateExaminerQuestionResult(
+    id: number,
+    patch: Partial<ExaminerQuestionResult>,
+  ): Promise<ExaminerQuestionResult> {
+    const [updated] = await db
+      .update(examinerQuestionResults)
+      .set(patch)
+      .where(eq(examinerQuestionResults.id, id))
+      .returning();
+    return updated;
+  }
+
+  // ─── Corrections audit log ──────────────────────────────
+
+  async insertCorrectionEvent(event: {
+    sessionId: number;
+    userId: number;
+    targetType: "item_result" | "question_result";
+    targetId: number;
+    aiValue: string;
+    fromValue: string;
+    toValue: string;
+    note?: string | null;
+  }): Promise<typeof correctionEvents.$inferSelect> {
+    const [row] = await db
+      .insert(correctionEvents)
+      .values({
+        sessionId: event.sessionId,
+        userId: event.userId,
+        targetType: event.targetType,
+        targetId: event.targetId,
+        aiValue: event.aiValue,
+        fromValue: event.fromValue,
+        toValue: event.toValue,
+        note: event.note ?? null,
+      })
+      .returning();
+    return row;
   }
 
   // ─── Community Library ──────────────────────────────────

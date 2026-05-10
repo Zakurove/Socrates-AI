@@ -2,7 +2,10 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middleware/auth.js";
 import { storage } from "../storage.js";
-import { buildSessionScoring } from "../services/session-scoring.js";
+import {
+  buildSessionScoring,
+  recomputeSessionTotalScore,
+} from "../services/session-scoring.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -230,8 +233,13 @@ router.post("/:id/item-results", async (req, res, next) => {
         sessionId,
         itemId: item.itemId,
         status: item.status,
+        // Freeze the AI's original verdict at save time. The user's later
+        // corrections mutate `status` only; `ai_status` is read-only.
+        aiStatus: item.status,
         matchedTranscript: item.matchedTranscript ?? null,
         timestampSeconds: item.timestampSeconds ?? null,
+        correctedAt: null,
+        correctionNote: null,
       })),
     );
 
@@ -283,7 +291,12 @@ router.post("/:id/question-results", async (req, res, next) => {
         questionId: q.questionId,
         userAnswerTranscript: q.userAnswerTranscript ?? null,
         score: q.score ?? null,
+        // Freeze the AI's original score so a later user correction can
+        // be told apart from the matcher's verdict.
+        aiScore: q.score ?? null,
         feedback: q.feedback ?? null,
+        correctedAt: null,
+        correctionNote: null,
       })),
     );
 
@@ -292,5 +305,179 @@ router.post("/:id/question-results", async (req, res, next) => {
     next(err);
   }
 });
+
+// ─── User corrections ───────────────────────────────────────────
+// Lets the practitioner override the AI matcher's verdict after grading.
+// Both endpoints log to correction_events for analytics + audit, then
+// recompute session.totalScore against the corrected rows.
+
+const patchItemResultSchema = z
+  .object({
+    // Only user-settable statuses; partial / checked_after_time stay
+    // whatever the matcher set them to.
+    status: z.enum(["checked", "missed"]),
+    note: z.string().max(500).optional(),
+  })
+  .strict();
+
+router.patch(
+  "/:sessionId/item-results/:itemResultId",
+  async (req, res, next) => {
+    try {
+      const sessionId = parseInt(req.params.sessionId, 10);
+      const itemResultId = parseInt(req.params.itemResultId, 10);
+      if (isNaN(sessionId) || isNaN(itemResultId)) {
+        return res.status(400).json({ message: "Invalid ID" });
+      }
+
+      const session = await storage.getSession(sessionId);
+      if (!session) return res.status(404).json({ message: "Session not found" });
+      if (session.userId !== req.user!.id) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      const parsed = patchItemResultSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Validation failed",
+          errors: parsed.error.flatten().fieldErrors,
+        });
+      }
+
+      const row = await storage.getItemResult(itemResultId);
+      if (!row) return res.status(404).json({ message: "Item result not found" });
+      if (row.sessionId !== sessionId) {
+        return res
+          .status(400)
+          .json({ message: "Item result does not belong to this session" });
+      }
+
+      // Parents (items with children) are derived headings and not graded
+      // directly — block correction attempts on them.
+      if ((row.item.subItems ?? []).length > 0) {
+        return res
+          .status(400)
+          .json({ message: "Parent items are not correctable" });
+      }
+
+      const currentStatus = row.status;
+      const newStatus = parsed.data.status;
+      const note = parsed.data.note ?? null;
+
+      // Idempotent: no-op when the requested status matches the current one.
+      if (newStatus === currentStatus) {
+        return res.json({
+          itemResult: row,
+          sessionTotalScore: session.totalScore ?? 0,
+        });
+      }
+
+      // Flipping back to AI's original verdict clears the correction marker.
+      const revertingToAi = newStatus === row.aiStatus;
+      const updated = await storage.updateItemResult(itemResultId, {
+        status: newStatus,
+        correctedAt: revertingToAi ? null : new Date(),
+        correctionNote: note,
+      });
+
+      await storage.insertCorrectionEvent({
+        sessionId,
+        userId: req.user!.id,
+        targetType: "item_result",
+        targetId: row.id,
+        aiValue: row.aiStatus,
+        fromValue: currentStatus,
+        toValue: newStatus,
+        note,
+      });
+
+      const sessionTotalScore = await recomputeSessionTotalScore(sessionId);
+      return res.json({ itemResult: updated, sessionTotalScore });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+const patchQuestionResultSchema = z
+  .object({
+    score: z.number().min(0).max(1),
+    note: z.string().max(500).optional(),
+  })
+  .strict();
+
+router.patch(
+  "/:sessionId/question-results/:questionResultId",
+  async (req, res, next) => {
+    try {
+      const sessionId = parseInt(req.params.sessionId, 10);
+      const questionResultId = parseInt(req.params.questionResultId, 10);
+      if (isNaN(sessionId) || isNaN(questionResultId)) {
+        return res.status(400).json({ message: "Invalid ID" });
+      }
+
+      const session = await storage.getSession(sessionId);
+      if (!session) return res.status(404).json({ message: "Session not found" });
+      if (session.userId !== req.user!.id) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      const parsed = patchQuestionResultSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Validation failed",
+          errors: parsed.error.flatten().fieldErrors,
+        });
+      }
+
+      const row = await storage.getExaminerQuestionResult(questionResultId);
+      if (!row) {
+        return res.status(404).json({ message: "Question result not found" });
+      }
+      if (row.sessionId !== sessionId) {
+        return res
+          .status(400)
+          .json({ message: "Question result does not belong to this session" });
+      }
+
+      const currentScore = row.score;
+      const newScore = parsed.data.score;
+      const note = parsed.data.note ?? null;
+
+      if (currentScore !== null && newScore === currentScore) {
+        return res.json({
+          questionResult: row,
+          sessionTotalScore: session.totalScore ?? 0,
+        });
+      }
+
+      const revertingToAi = row.aiScore !== null && newScore === row.aiScore;
+      const updated = await storage.updateExaminerQuestionResult(
+        questionResultId,
+        {
+          score: newScore,
+          correctedAt: revertingToAi ? null : new Date(),
+          correctionNote: note,
+        },
+      );
+
+      await storage.insertCorrectionEvent({
+        sessionId,
+        userId: req.user!.id,
+        targetType: "question_result",
+        targetId: row.id,
+        aiValue: row.aiScore === null ? "" : String(row.aiScore),
+        fromValue: currentScore === null ? "" : String(currentScore),
+        toValue: String(newScore),
+        note,
+      });
+
+      const sessionTotalScore = await recomputeSessionTotalScore(sessionId);
+      return res.json({ questionResult: updated, sessionTotalScore });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 export default router;

@@ -1,6 +1,11 @@
 import { useParams, useLocation } from "wouter";
-import { useState } from "react";
-import { useSession, useDeleteSession } from "@/hooks/use-sessions";
+import { useEffect, useRef, useState } from "react";
+import {
+  useSession,
+  useDeleteSession,
+  useUpdateItemResult,
+  useUpdateQuestionResult,
+} from "@/hooks/use-sessions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageHeader } from "@/components/PageHeader";
@@ -22,15 +27,36 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Check,
   Clock,
   Loader2,
   X,
   AlertTriangle,
   Trash2,
+  Info,
+  Pencil,
+  Undo2,
 } from "lucide-react";
 import { cn, formatTime } from "@/lib/utils";
 import { motion } from "framer-motion";
+
+type ItemAiStatus = "checked" | "missed" | "partial" | "checked_after_time";
+
+function prettyAiStatus(s: ItemAiStatus | string): string {
+  if (s === "checked") return "checked";
+  if (s === "missed") return "missed";
+  if (s === "partial") return "partial";
+  if (s === "checked_after_time") return "checked after time";
+  return String(s);
+}
+
+const CORRECTED_BADGE_CLASS =
+  "inline-flex shrink-0 items-center rounded-full bg-primary/10 px-1.5 py-[2px] text-[10px] font-bold uppercase tracking-[0.16em] text-primary leading-none";
 
 function scoreRampText(score: number): string {
   if (score >= 75) return "text-emerald-600 dark:text-emerald-400";
@@ -88,8 +114,66 @@ export default function ResultsPage() {
   const [, navigate] = useLocation();
   const { data: session, isLoading, error } = useSession(params.id);
   const deleteSession = useDeleteSession();
+  const updateItemResult = useUpdateItemResult();
+  const updateQuestionResult = useUpdateQuestionResult();
   const { toast } = useToast();
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  // Stable reference for syncing pending state below.
+  const itemResultsRef = useRef(session?.itemResults);
+  itemResultsRef.current = session?.itemResults;
+  const questionResultsRef = useRef(session?.examinerQuestionResults);
+  questionResultsRef.current = session?.examinerQuestionResults;
+  // Tracks which question row has its score-picker open.
+  const [openScorePickerFor, setOpenScorePickerFor] = useState<number | null>(
+    null
+  );
+  // Optimistic local override: itemResult.id → status. Cleared whenever the
+  // server-side value (via session refetch) catches up.
+  const [pendingItemStatus, setPendingItemStatus] = useState<
+    Record<number, "checked" | "missed">
+  >({});
+  // Same for question results: questionResult.id → score (0..1).
+  const [pendingQuestionScore, setPendingQuestionScore] = useState<
+    Record<number, number>
+  >({});
+
+  // Drop optimistic overrides once the refetched server row matches the
+  // pending value (the source of truth has caught up).
+  useEffect(() => {
+    const irs = itemResultsRef.current;
+    if (!irs) return;
+    setPendingItemStatus((prev) => {
+      let changed = false;
+      const next: Record<number, "checked" | "missed"> = {};
+      for (const id in prev) {
+        const row = irs.find((r) => r.id === Number(id));
+        if (row && row.status === prev[id as unknown as number]) {
+          changed = true;
+        } else {
+          next[id as unknown as number] = prev[id as unknown as number];
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [session?.itemResults]);
+
+  useEffect(() => {
+    const qrs = questionResultsRef.current;
+    if (!qrs) return;
+    setPendingQuestionScore((prev) => {
+      let changed = false;
+      const next: Record<number, number> = {};
+      for (const id in prev) {
+        const row = qrs.find((r) => r.id === Number(id));
+        if (row && row.score === prev[id as unknown as number]) {
+          changed = true;
+        } else {
+          next[id as unknown as number] = prev[id as unknown as number];
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [session?.examinerQuestionResults]);
 
   if (isLoading) {
     return (
@@ -154,6 +238,39 @@ export default function ResultsPage() {
     }
   });
 
+  // A row is a "parent" (heading) if any other row points to its item as
+  // parentItemId. Parents are derived from their children — no affordance.
+  const hasChildrenSet = new Set<number>();
+  session.itemResults?.forEach((ir) => {
+    if (ir.item.parentItemId) hasChildrenSet.add(ir.item.parentItemId);
+  });
+
+  // Effective status / score honors any in-flight optimistic flip.
+  const effectiveItemStatus = (ir: (typeof session.itemResults)[0]): string =>
+    pendingItemStatus[ir.id] ?? ir.status;
+  const effectiveQuestionScore = (
+    qr: (typeof session.examinerQuestionResults)[0]
+  ): number | null =>
+    pendingQuestionScore[qr.id] !== undefined
+      ? pendingQuestionScore[qr.id]
+      : qr.score;
+
+  // Corrections count = leaf items where final status differs from aiStatus +
+  // questions where final score differs from aiScore.
+  const correctionsCount =
+    (session.itemResults?.filter(
+      (ir) =>
+        !hasChildrenSet.has(ir.item.id) &&
+        ir.aiStatus !== undefined &&
+        effectiveItemStatus(ir) !== ir.aiStatus
+    ).length ?? 0) +
+    (session.examinerQuestionResults?.filter(
+      (qr) =>
+        qr.aiScore !== null &&
+        qr.aiScore !== undefined &&
+        effectiveQuestionScore(qr) !== qr.aiScore
+    ).length ?? 0);
+
   // Items stat shows leaf coverage (parent rows are headings, not points).
   // Prefer the server-computed fraction so the numbers match the breakdown.
   const checkedCount = scoring
@@ -187,6 +304,63 @@ export default function ResultsPage() {
   const backTo = session.stationId
     ? `/station/${session.stationId}`
     : "/my-stations";
+
+  // Flip a checklist row optimistically, call the server, revert on failure.
+  const applyItemCorrection = async (
+    ir: (typeof session.itemResults)[0],
+    nextStatus: "checked" | "missed"
+  ) => {
+    const prevStatus = effectiveItemStatus(ir);
+    if (prevStatus === nextStatus) return;
+    setPendingItemStatus((p) => ({ ...p, [ir.id]: nextStatus }));
+    try {
+      await updateItemResult.mutateAsync({
+        sessionId: session.id,
+        itemResultId: ir.id,
+        status: nextStatus,
+      });
+    } catch (err) {
+      // Roll back the optimistic flip so the row matches reality.
+      setPendingItemStatus((p) => {
+        const next = { ...p };
+        delete next[ir.id];
+        return next;
+      });
+      toast({
+        title: "Couldn't save correction",
+        description: err instanceof Error ? err.message : undefined,
+        variant: "warning",
+      });
+    }
+  };
+
+  // Same shape for question scores. `nextScore` is 0..1.
+  const applyQuestionCorrection = async (
+    qr: (typeof session.examinerQuestionResults)[0],
+    nextScore: number
+  ) => {
+    const prevScore = effectiveQuestionScore(qr);
+    if (prevScore === nextScore) return;
+    setPendingQuestionScore((p) => ({ ...p, [qr.id]: nextScore }));
+    try {
+      await updateQuestionResult.mutateAsync({
+        sessionId: session.id,
+        questionResultId: qr.id,
+        score: nextScore,
+      });
+    } catch (err) {
+      setPendingQuestionScore((p) => {
+        const next = { ...p };
+        delete next[qr.id];
+        return next;
+      });
+      toast({
+        title: "Couldn't save correction",
+        description: err instanceof Error ? err.message : undefined,
+        variant: "warning",
+      });
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background pb-10">
@@ -240,26 +414,32 @@ export default function ResultsPage() {
                       fill="none"
                       stroke="currentColor"
                       strokeWidth="8"
-                      className="text-muted/40"
+                      className="text-border/60"
                     />
-                    <motion.circle
-                      cx="60"
-                      cy="60"
-                      r={radius}
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="8"
-                      strokeLinecap="round"
-                      className={scoreRampStroke(score)}
-                      initial={{ strokeDasharray: `0 ${circumference}` }}
-                      animate={{
-                        strokeDasharray: `${dash} ${circumference}`,
-                      }}
-                      transition={{
-                        duration: 0.6,
-                        ease: [0.32, 0.72, 0, 1],
-                      }}
-                    />
+                    {/* Only render the foreground arc when there's score to
+                        show. At score=0 the rounded linecap leaves a stub
+                        that reads as a floating dot, so we just skip it
+                        and let the muted background ring carry the visual. */}
+                    {dash > 0 && (
+                      <motion.circle
+                        cx="60"
+                        cy="60"
+                        r={radius}
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="8"
+                        strokeLinecap="round"
+                        className={scoreRampStroke(score)}
+                        initial={{ strokeDasharray: `0 ${circumference}` }}
+                        animate={{
+                          strokeDasharray: `${dash} ${circumference}`,
+                        }}
+                        transition={{
+                          duration: 0.6,
+                          ease: [0.32, 0.72, 0, 1],
+                        }}
+                      />
+                    )}
                   </svg>
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
                     <span
@@ -387,7 +567,26 @@ export default function ResultsPage() {
             }}
             className="space-y-3"
           >
-            <h2 className="text-h2 text-foreground">Checklist</h2>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <h2 className="text-h2 text-foreground">Checklist</h2>
+              {correctionsCount > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
+                      {correctionsCount} correction
+                      {correctionsCount > 1 ? "s" : ""} applied — thanks, this
+                      helps Socrates learn
+                      <Info className="h-3 w-3" aria-hidden />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs text-[11px] leading-relaxed">
+                    Your corrections become the new score for your history and
+                    feed into improving the grader. The AI's original answer is
+                    preserved privately for comparison.
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
             <div className="rounded-2xl bg-card border border-border/60 p-5 space-y-6">
               {Array.from(itemsBySectionId.entries()).map(
                 ([sectionId, group]) => (
@@ -398,20 +597,30 @@ export default function ResultsPage() {
                     <div className="space-y-1.5">
                       {group.items.map((ir) => {
                         const depth = itemDepthMap.get(ir.item.id) ?? 0;
-                        const isChecked = ir.status === "checked";
-                        const isLate = ir.status === "checked_after_time";
-                        const isMissed = ir.status === "missed";
+                        const isParent = hasChildrenSet.has(ir.item.id);
+                        const status = effectiveItemStatus(ir);
+                        const isChecked = status === "checked";
+                        const isLate = status === "checked_after_time";
+                        const isMissed = status === "missed";
+                        const isCorrected =
+                          !isParent &&
+                          ir.aiStatus !== undefined &&
+                          status !== ir.aiStatus;
+                        const nextStatus: "checked" | "missed" = isChecked
+                          ? "missed"
+                          : "checked";
                         return (
                           <div
                             key={ir.id}
                             className={cn(
-                              "flex items-start gap-3 rounded-xl px-3 py-2.5 transition-smooth",
+                              "group flex items-start gap-3 rounded-xl px-3 py-2.5 transition-smooth",
                               depth === 1 && "ml-4",
                               depth === 2 && "ml-8",
                               isChecked &&
                                 "bg-emerald-500/5 dark:bg-emerald-500/10",
                               isLate && "bg-brand-accent/5",
-                              isMissed && "bg-muted/40"
+                              isMissed && "bg-muted/40",
+                              isCorrected && "ring-1 ring-primary/30"
                             )}
                           >
                             <div
@@ -447,6 +656,59 @@ export default function ResultsPage() {
                                 Critical
                               </span>
                             )}
+                            {/* Correction affordance — leaf rows only. */}
+                            {!isParent && (
+                              <div className="shrink-0 flex items-center gap-2">
+                                {isCorrected && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span
+                                        className={CORRECTED_BADGE_CLASS}
+                                        data-testid="corrected-badge"
+                                      >
+                                        Corrected
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-xs text-[11px]">
+                                      You corrected this from{" "}
+                                      {prettyAiStatus(ir.aiStatus)} to{" "}
+                                      {prettyAiStatus(status)}.
+                                    </TooltipContent>
+                                  </Tooltip>
+                                )}
+                                {isCorrected && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      applyItemCorrection(
+                                        ir,
+                                        ir.aiStatus === "checked" ||
+                                          ir.aiStatus === "checked_after_time"
+                                          ? "checked"
+                                          : "missed"
+                                      )
+                                    }
+                                    className="text-[11px] text-muted-foreground hover:text-foreground transition-smooth inline-flex items-center gap-1"
+                                  >
+                                    <Undo2 className="h-3 w-3" />
+                                    Undo
+                                  </button>
+                                )}
+                                {!isCorrected && (
+                                  <button
+                                    type="button"
+                                    aria-label={`Mark as ${nextStatus}`}
+                                    onClick={() =>
+                                      applyItemCorrection(ir, nextStatus)
+                                    }
+                                    className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50 transition-smooth opacity-100 lg:opacity-0 lg:group-hover:opacity-100 focus:opacity-100"
+                                  >
+                                    <Pencil className="h-3 w-3" />
+                                    Wasn't right?
+                                  </button>
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -474,13 +736,28 @@ export default function ResultsPage() {
               <h2 className="text-h2 text-foreground">Examiner questions</h2>
               <Accordion type="multiple" className="space-y-3">
                 {session.examinerQuestionResults.map((qr, qi) => {
-                  const correct = qr.score === 1;
-                  const partial = qr.score === 0.5;
+                  const score = effectiveQuestionScore(qr);
+                  const pct =
+                    score !== null && score !== undefined
+                      ? Math.round(score * 100)
+                      : null;
+                  const correct = score === 1;
+                  const partial = score !== null && score > 0 && score < 1;
+                  const isCorrected =
+                    qr.aiScore !== null &&
+                    qr.aiScore !== undefined &&
+                    score !== qr.aiScore;
+                  const pickerOpen = openScorePickerFor === qr.id;
+                  // Preset chips fallback (no shadcn Popover in this app).
+                  const presets = [0, 0.25, 0.5, 0.75, 1] as const;
                   return (
                     <AccordionItem
                       key={qr.id}
                       value={`q-${qr.id}`}
-                      className="rounded-2xl bg-card border border-border/60 overflow-hidden"
+                      className={cn(
+                        "rounded-2xl bg-card border border-border/60 overflow-hidden",
+                        isCorrected && "ring-1 ring-primary/30"
+                      )}
                     >
                       <AccordionTrigger className="px-5 py-4 hover:no-underline">
                         <div className="flex items-start justify-between gap-3 w-full text-left">
@@ -494,7 +771,7 @@ export default function ResultsPage() {
                           </div>
                           <span
                             className={cn(
-                              "shrink-0 inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold",
+                              "shrink-0 inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold tabular-nums",
                               correct &&
                                 "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
                               partial && "bg-brand-accent/15 text-brand-accent",
@@ -503,15 +780,11 @@ export default function ResultsPage() {
                                 "bg-muted text-muted-foreground"
                             )}
                           >
-                            {correct
-                              ? "Correct"
-                              : partial
-                                ? "Partial"
-                                : "Incorrect"}
+                            {pct !== null ? `${pct}%` : "—"}
                           </span>
                         </div>
                       </AccordionTrigger>
-                      <AccordionContent className="px-5 pb-5">
+                      <AccordionContent className="px-5 pb-5 space-y-4">
                         <div className="rounded-xl bg-muted/40 p-4 space-y-1">
                           <p className="text-label text-muted-foreground uppercase">
                             Ideal answer
@@ -520,6 +793,79 @@ export default function ResultsPage() {
                             {qr.question.idealAnswer}
                           </p>
                         </div>
+                        {/* Correction strip: badge + Undo, or open-picker pill. */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {isCorrected && (
+                            <>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className={CORRECTED_BADGE_CLASS}>
+                                    Corrected
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs text-[11px]">
+                                  You corrected this from{" "}
+                                  {qr.aiScore !== null
+                                    ? `${Math.round((qr.aiScore ?? 0) * 100)}%`
+                                    : "—"}{" "}
+                                  to {pct ?? 0}%.
+                                </TooltipContent>
+                              </Tooltip>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  qr.aiScore !== null &&
+                                  applyQuestionCorrection(qr, qr.aiScore ?? 0)
+                                }
+                                className="text-[11px] text-muted-foreground hover:text-foreground transition-smooth inline-flex items-center gap-1"
+                              >
+                                <Undo2 className="h-3 w-3" />
+                                Undo
+                              </button>
+                            </>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setOpenScorePickerFor(pickerOpen ? null : qr.id)
+                            }
+                            className="ml-auto inline-flex items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50 transition-smooth"
+                            aria-expanded={pickerOpen}
+                          >
+                            <Pencil className="h-3 w-3" />
+                            Correct score
+                          </button>
+                        </div>
+                        {pickerOpen && (
+                          <div className="rounded-xl border border-border/60 bg-background p-3 space-y-2">
+                            <p className="text-[11px] text-muted-foreground">
+                              Pick the right score for this answer.
+                            </p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {presets.map((p) => {
+                                const selected = score === p;
+                                return (
+                                  <button
+                                    key={p}
+                                    type="button"
+                                    onClick={async () => {
+                                      setOpenScorePickerFor(null);
+                                      await applyQuestionCorrection(qr, p);
+                                    }}
+                                    className={cn(
+                                      "rounded-full border px-3 py-1 text-[11px] tabular-nums transition-smooth",
+                                      selected
+                                        ? "border-primary bg-primary/10 text-primary"
+                                        : "border-border/60 text-muted-foreground hover:text-foreground hover:border-primary/50"
+                                    )}
+                                  >
+                                    {Math.round(p * 100)}%
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </AccordionContent>
                     </AccordionItem>
                   );

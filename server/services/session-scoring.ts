@@ -99,3 +99,50 @@ export async function buildSessionScoring(
     examinerScores,
   });
 }
+
+/**
+ * Re-aggregate a session's score from the source-of-truth tables, write the
+ * rounded composite back to sessions.totalScore, and return the new value.
+ * Called after a user correction so the persisted totalScore stays in sync
+ * with the corrected item/question results.
+ */
+export async function recomputeSessionTotalScore(
+  sessionId: number,
+): Promise<number> {
+  const session = await storage.getSession(sessionId);
+  if (!session) {
+    throw new Error(`Session ${sessionId} not found`);
+  }
+
+  const station = await storage.getStation(session.stationId);
+  const checklistTotal = countLeafItems(station);
+  const leafIds = collectLeafItemIds(station);
+
+  const itemRows = await storage.getItemResultsBySession(sessionId);
+  // Match practice-page semantics: only `checked` and `checked_after_time`
+  // count toward coverage. Filter to leaves so parent headings don't inflate.
+  const checklistCovered = itemRows.filter(
+    (r) =>
+      leafIds.has(r.itemId) &&
+      (r.status === "checked" || r.status === "checked_after_time"),
+  ).length;
+
+  const examinerTotal = station?.examinerQuestions?.length ?? 0;
+  const questionRows =
+    await storage.getExaminerQuestionResultsBySession(sessionId);
+  const examinerScores = questionRows
+    .map((r) => (typeof r.score === "number" ? r.score : null))
+    .filter((s): s is number => s !== null);
+
+  const breakdown = computeCompositeScore({
+    checklistTotal,
+    checklistCovered,
+    examinerTotal,
+    examinerScores,
+  });
+
+  const totalScore = Math.round(breakdown.compositeScore);
+  await storage.updateSession(sessionId, { totalScore });
+  return totalScore;
+}
+

@@ -27,15 +27,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     return <>{children}</>;
   }
 
-  if (location.startsWith("/admin/")) {
-    return (
-      <div className="app-backdrop min-h-screen w-full">
-        <div className="relative mx-auto w-full max-w-[960px] min-h-screen bg-background">
-          {children}
-        </div>
-      </div>
-    );
-  }
+  // Admin pages used to render in a special 960px-capped branch with no
+  // nav. Now they fall through to the default layout so admins keep the
+  // SideNav at lg+ and BottomNav at <lg, matching every other tab page.
+  // Each admin page already has its own internal max-width cap.
 
   // True immersive runners / editors / auth: no SideNav at any size. The
   // BottomNav is also hidden (these routes own their own viewport).

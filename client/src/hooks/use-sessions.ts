@@ -23,6 +23,9 @@ export type SessionWithDetails = Session & {
     itemId: number;
     status: string;
     timestampSeconds: number | null;
+    aiStatus: "checked" | "missed" | "partial" | "checked_after_time";
+    correctedAt: string | null;
+    correctionNote: string | null;
     item: {
       id: number;
       text: string;
@@ -37,6 +40,9 @@ export type SessionWithDetails = Session & {
     questionId: number;
     score: number | null;
     feedback: string | null;
+    aiScore: number | null;
+    correctedAt: string | null;
+    correctionNote: string | null;
     question: { question: string; idealAnswer: string };
   }>;
   /** Server-derived composite scoring (iter10). Always present on reads. */
@@ -183,6 +189,105 @@ export function useSaveQuestionResults() {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({
         queryKey: [`/api/sessions/${variables.sessionId}`],
+      });
+    },
+  });
+}
+
+export type UpdateItemResultResponse = {
+  itemResult: {
+    id: number;
+    status: string;
+    aiStatus: "checked" | "missed" | "partial" | "checked_after_time";
+    correctedAt: string | null;
+    correctionNote: string | null;
+  };
+  sessionTotalScore: number;
+};
+
+/**
+ * User-correction of a single checklist item. Flips status (checked <-> missed)
+ * and the server returns the freshly recomputed session totalScore so the gauge
+ * stays in sync after the session query invalidates.
+ */
+export function useUpdateItemResult() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      sessionId,
+      itemResultId,
+      status,
+      note,
+    }: {
+      sessionId: number;
+      itemResultId: number;
+      status: "checked" | "missed";
+      note?: string;
+    }) => {
+      const res = await apiRequest(
+        "PATCH",
+        `/api/sessions/${sessionId}/item-results/${itemResultId}`,
+        { status, ...(note !== undefined ? { note } : {}) }
+      );
+      return (await res.json()) as UpdateItemResultResponse;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: [`/api/sessions/${variables.sessionId}`],
+      });
+      queryClient.invalidateQueries({
+        predicate: (q) =>
+          typeof q.queryKey[0] === "string" &&
+          (q.queryKey[0] as string).startsWith("/api/sessions"),
+      });
+    },
+  });
+}
+
+export type UpdateQuestionResultResponse = {
+  questionResult: {
+    id: number;
+    score: number;
+    aiScore: number | null;
+    correctedAt: string | null;
+    correctionNote: string | null;
+  };
+  sessionTotalScore: number;
+};
+
+/**
+ * User-correction of an examiner-question score (0..1). Server validates the
+ * range and returns the recomputed session totalScore.
+ */
+export function useUpdateQuestionResult() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      sessionId,
+      questionResultId,
+      score,
+      note,
+    }: {
+      sessionId: number;
+      questionResultId: number;
+      score: number;
+      note?: string;
+    }) => {
+      const res = await apiRequest(
+        "PATCH",
+        `/api/sessions/${sessionId}/question-results/${questionResultId}`,
+        { score, ...(note !== undefined ? { note } : {}) }
+      );
+      return (await res.json()) as UpdateQuestionResultResponse;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: [`/api/sessions/${variables.sessionId}`],
+      });
+      queryClient.invalidateQueries({
+        predicate: (q) =>
+          typeof q.queryKey[0] === "string" &&
+          (q.queryKey[0] as string).startsWith("/api/sessions"),
       });
     },
   });
