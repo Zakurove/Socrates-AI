@@ -47,46 +47,60 @@ export function SideNav() {
       aria-label="Primary"
     >
       {/* ── Header ── */}
-      <div
-        className={cn(
-          "flex items-center pt-6 pb-4",
-          collapsed ? "flex-col gap-2 px-0" : "gap-3 px-5",
-        )}
-      >
-        {collapsed ? (
+      {collapsed ? (
+        <div className="flex flex-col items-center gap-2 px-0 pt-6 pb-4">
           <img
             src="/brand/icon.png"
             alt="Socrates AI"
             className="h-12 w-12 shrink-0 rounded-xl"
           />
-        ) : (
-          <div className="min-w-0 flex-1 leading-tight">
-            <div className="flex items-center gap-2">
-              <img
-                src="/brand/logo.png"
-                alt="Socrates AI"
-                className="h-14 w-auto shrink-0"
-              />
-              <AlphaBadge />
-            </div>
-            <div className="mt-1 text-caption text-muted-foreground">OSCE practice</div>
-          </div>
-        )}
-
-        {/* Collapse / expand toggle */}
-        <button
-          type="button"
-          onClick={() => setCollapsed((c) => !c)}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-smooth hover:bg-muted/60 hover:text-foreground"
-        >
-          {collapsed ? (
+          <button
+            type="button"
+            onClick={() => setCollapsed(false)}
+            aria-label="Expand sidebar"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-smooth hover:bg-muted/60 hover:text-foreground"
+          >
             <ChevronRight className="h-4 w-4" aria-hidden />
-          ) : (
-            <ChevronLeft className="h-4 w-4" aria-hidden />
-          )}
-        </button>
-      </div>
+          </button>
+        </div>
+      ) : (
+        <div className="px-5 pt-5 pb-5">
+          {/* Top row: collapse toggle pinned right so the logo gets full width below. */}
+          <div className="mb-3 flex items-center justify-end">
+            <button
+              type="button"
+              onClick={() => setCollapsed(true)}
+              aria-label="Collapse sidebar"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-smooth hover:bg-muted/60 hover:text-foreground"
+            >
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
+          {/* Big wordmark logo. h-20 = 80px → ~146px wide at the asset's
+              1.83:1 aspect, fits inside the 208px content area. */}
+          <img
+            src="/brand/logo.png"
+            alt="Socrates AI"
+            className="h-20 w-auto"
+          />
+          {/* Alpha badge below — own row so it never wraps the logo. */}
+          <div className="mt-2">
+            <AlphaBadge />
+          </div>
+          {/* Brand motto — replaces the old "OSCE practice" subtitle. */}
+          <p className="mt-3 flex items-center gap-1.5 text-[12px] tracking-tight">
+            <span className="font-semibold text-foreground">Build</span>
+            <span aria-hidden className="text-muted-foreground/50 font-bold">
+              ·
+            </span>
+            <span className="font-semibold text-foreground">Practice</span>
+            <span aria-hidden className="text-muted-foreground/50 font-bold">
+              ·
+            </span>
+            <span className="font-semibold text-foreground">Learn</span>
+          </p>
+        </div>
+      )}
 
       {/* ── Nav items ── */}
       <nav className="flex-1 overflow-y-auto px-2 py-2">
