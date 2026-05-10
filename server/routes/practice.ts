@@ -404,11 +404,11 @@ GRADING PRINCIPLES — read carefully.
 
 7) ERR ON THE SIDE OF COVERED — for general history / inspection / palpation actions. If the transcript plausibly addresses the item under rules 1–4, return covered=true. A missed positive is worse than a charitable positive — the student wants real-time progress feedback.
 
-8) NAMED DIAGNOSTIC TESTS ARE SPECIFIC — DO NOT BE GENEROUS HERE.
-   Items that are named clinical tests / signs / maneuvers (e.g., "Bear Hug Test", "Lift-Off Test", "Hawkins-Kennedy", "Neer's", "Speed's", "Yergason's", "Apley's Scratch", "Drop Arm", "Empty Can", "Cross-body Adduction", "O'Brien's", "Painful Arc", etc.) are SPECIFIC procedures with specific maneuvers. Credit them ONLY when:
-   - the student NAMES the test (or a clearly recognizable variant), OR
-   - the student DESCRIBES that specific maneuver (e.g., for Bear Hug: "patient places palm on opposite shoulder and resists external rotation"; for Hawkins-Kennedy: "shoulder forward-flexed to 90 with elbow flexed and internally rotated").
-   DO NOT credit a named test merely because the student mentioned the same target structure or an adjacent test. Two subscapularis tests (Lift-Off and Bear Hug) are NOT covered by saying "I'll test subscapularis" — that addresses neither test specifically.
+8) NAMED DIAGNOSTIC TESTS, SIGNS, MANEUVERS, AND REFLEXES ARE SPECIFIC — DO NOT BE GENEROUS HERE.
+   Items that are named clinical tests / signs / maneuvers / individual reflexes (e.g., "Bear Hug Test", "Lift-Off Test", "Hawkins-Kennedy", "Neer's", "Speed's", "Yergason's", "Apley's Scratch", "Drop Arm", "Empty Can", "Cross-body Adduction", "O'Brien's", "Painful Arc", "Biceps reflex", "Triceps reflex", "Brachio-radialis reflex", "Patellar reflex", "Ankle reflex", "Babinski sign", etc.) are SPECIFIC procedures with specific anatomy / maneuvers. Credit them ONLY when:
+   - the student NAMES the test / reflex (or a clearly recognizable variant), OR
+   - the student DESCRIBES that specific maneuver / anatomy (e.g., for Bear Hug: "patient places palm on opposite shoulder and resists external rotation"; for Brachio-radialis reflex: "tapping over the radius two inches above the wrist").
+   DO NOT credit a named test / reflex merely because the student mentioned the parent category. Saying "I'll test the reflexes" or naming TWO reflexes (e.g., biceps + triceps) does NOT cover a THIRD named reflex (e.g., brachio-radialis) — each named reflex requires its own mention. Same for tests: two subscapularis tests (Lift-Off and Bear Hug) are NOT covered by saying "I'll test subscapularis" — that addresses neither specifically.
 
 9) DON'T HALLUCINATE. Silence and unrelated talk don't count. If the transcript truly doesn't address the item, covered=false with confidence=0.
 
@@ -670,7 +670,7 @@ GRADING PRINCIPLES — read carefully.
 
 7) ERR ON THE SIDE OF COVERED — for general history / inspection / palpation actions. A missed positive is worse than a charitable positive.
 
-8) NAMED DIAGNOSTIC TESTS ARE SPECIFIC — DO NOT BE GENEROUS. Items that are named tests (Bear Hug, Lift-Off, Hawkins-Kennedy, Neer's, Speed's, Yergason's, Apley's, Drop Arm, Empty Can, O'Brien's, Painful Arc, etc.) are credited ONLY when the student NAMES the test or DESCRIBES its specific maneuver. Mentioning the target structure alone does not count.
+8) NAMED DIAGNOSTIC TESTS, SIGNS, MANEUVERS, AND REFLEXES ARE SPECIFIC — DO NOT BE GENEROUS. Items that are named tests / reflexes (Bear Hug, Lift-Off, Hawkins-Kennedy, Neer's, Speed's, Yergason's, Apley's, Drop Arm, Empty Can, O'Brien's, Painful Arc, Biceps reflex, Triceps reflex, Brachio-radialis reflex, Patellar reflex, Ankle reflex, Babinski sign, etc.) are credited ONLY when the student NAMES that specific item or DESCRIBES its specific maneuver / anatomy. Naming two reflexes does not cover a third; mentioning the parent category does not cover any of its individual named members.
 
 9) DON'T HALLUCINATE. Silence and unrelated talk don't count.
 
