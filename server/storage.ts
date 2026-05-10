@@ -115,6 +115,7 @@ export interface IStorage {
     },
   ): Promise<StationWithDetails | undefined>;
   deleteStation(id: number): Promise<void>;
+  deleteSession(id: number): Promise<void>;
 
   // Collections
   getCollections(userId: number): Promise<Collection[]>;
@@ -943,6 +944,13 @@ class DatabaseStorage implements IStorage {
 
   async deleteStation(id: number): Promise<void> {
     await db.delete(stations).where(eq(stations.id, id));
+  }
+
+  async deleteSession(id: number): Promise<void> {
+    // ON DELETE CASCADE on item_results and examiner_question_results FKs
+    // takes care of the children. The mock_exam_attempt_id FK is ON DELETE
+    // SET NULL so removing one session of a mock attempt is safe.
+    await db.delete(sessions).where(eq(sessions.id, id));
   }
 
   // ─── Collections ────────────────────────────────────────

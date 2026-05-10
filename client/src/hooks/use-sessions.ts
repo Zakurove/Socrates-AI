@@ -50,6 +50,31 @@ export function useSession(id: number | string | undefined) {
   });
 }
 
+/**
+ * Delete a session — used to:
+ *   - discard an in-progress run (Cancel during practice)
+ *   - remove a finalized run from history (Progress / Results pages)
+ * Server cascades item_results + examiner_question_results.
+ */
+export function useDeleteSession() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (sessionId: number) => {
+      await apiRequest("DELETE", `/api/sessions/${sessionId}`);
+    },
+    onSuccess: (_data, sessionId) => {
+      queryClient.invalidateQueries({
+        predicate: (q) =>
+          typeof q.queryKey[0] === "string" &&
+          (q.queryKey[0] as string).startsWith("/api/sessions"),
+      });
+      // Drop the cached single-session query for the deleted id so any
+      // stale ResultsPage instance can't render zombie data.
+      queryClient.removeQueries({ queryKey: [`/api/sessions/${sessionId}`] });
+    },
+  });
+}
+
 export function useCreateSession() {
   const queryClient = useQueryClient();
   return useMutation({

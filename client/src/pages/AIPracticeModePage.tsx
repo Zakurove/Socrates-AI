@@ -10,6 +10,7 @@ import { useParams, useLocation } from "wouter";
 import { useStation } from "@/hooks/use-stations";
 import { queryClient } from "@/lib/queryClient";
 import {
+  useDeleteSession,
   useCreateSession,
   useUpdateSession,
   useSaveItemResults,
@@ -24,6 +25,16 @@ import { PhaseTransition } from "@/components/practice/PhaseTransition";
 import { ReadingPhase } from "@/components/practice/ReadingPhase";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Loader2, MicOff, Square, VolumeX, Volume2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
@@ -86,6 +97,8 @@ export default function AIPracticeModePage() {
   const [, navigate] = useLocation();
   const { data: station, isLoading, error: stationError } = useStation(params.id);
   const createSession = useCreateSession();
+  const deleteSession = useDeleteSession();
+  const [showDiscardDialog, setShowDiscardDialog] = useState(false);
   const updateSession = useUpdateSession();
   const saveItemResults = useSaveItemResults();
   const { toast } = useToast();
@@ -430,6 +443,61 @@ export default function AIPracticeModePage() {
   // ---------------------------------------------------------------------------
   // End Session
   // ---------------------------------------------------------------------------
+
+  // Discard the active AI session — wipes the row + cascades children so
+  // it never appears in history.
+  const handleDiscardSession = useCallback(async () => {
+    if (autoEndTimerRef.current) {
+      clearTimeout(autoEndTimerRef.current);
+      autoEndTimerRef.current = null;
+    }
+    autoEndScheduledRef.current = true;
+    dispatch({ type: "END" });
+    narration.stop();
+    gemini.disconnect();
+    setShowDiscardDialog(false);
+
+    const sid = sessionIdRef.current;
+    if (sid) {
+      try {
+        await deleteSession.mutateAsync(sid);
+        toast({ title: "Session discarded" });
+      } catch (err) {
+        toast({
+          title: "Couldn't discard session",
+          description: err instanceof Error ? err.message : undefined,
+          variant: "warning",
+        });
+      }
+    }
+    navigate(station ? `/station/${station.id}` : "/home");
+  }, [deleteSession, gemini, narration, navigate, station, toast]);
+
+  // Reusable discard-confirmation dialog. Rendered at the end of each
+  // phase's return JSX so the dialog is available throughout the run.
+  const discardDialog = (
+    <AlertDialog open={showDiscardDialog} onOpenChange={setShowDiscardDialog}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Discard this session?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Your progress will be permanently deleted and the session won't
+            appear in your history. Use this when you got interrupted and
+            don't want this run to count.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Keep practicing</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={handleDiscardSession}
+          >
+            Discard session
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 
   const handleEndSession = useCallback(async () => {
     if (phase === "ending") return;
@@ -1142,17 +1210,24 @@ export default function AIPracticeModePage() {
             </Button>
           </div>
 
-          {hasExaminerQuestions && (
-            <div className="mt-3 flex items-center justify-center">
+          <div className="mt-3 flex items-center justify-center gap-5">
+            {hasExaminerQuestions && (
               <button
                 onClick={handleEndSession}
                 className="text-caption text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
               >
                 End session
               </button>
-            </div>
-          )}
+            )}
+            <button
+              onClick={() => setShowDiscardDialog(true)}
+              className="text-caption text-muted-foreground underline-offset-4 transition-colors hover:text-destructive hover:underline"
+            >
+              Discard session
+            </button>
+          </div>
         </div>
+        {discardDialog}
       </div>
     );
   }
@@ -1263,16 +1338,25 @@ export default function AIPracticeModePage() {
             >
               {hasExaminerQuestions ? "Go to examiner questions" : "End session"}
             </Button>
-            {hasExaminerQuestions && (
+            <div className="flex items-center justify-center gap-5">
+              {hasExaminerQuestions && (
+                <button
+                  onClick={handleEndSession}
+                  className="text-caption text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+                >
+                  End session
+                </button>
+              )}
               <button
-                onClick={handleEndSession}
-                className="text-caption text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+                onClick={() => setShowDiscardDialog(true)}
+                className="text-caption text-muted-foreground underline-offset-4 transition-colors hover:text-destructive hover:underline"
               >
-                End session
+                Discard session
               </button>
-            )}
+            </div>
           </div>
         </div>
+        {discardDialog}
       </div>
     );
   }

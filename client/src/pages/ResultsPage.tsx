@@ -1,8 +1,10 @@
 import { useParams, useLocation } from "wouter";
-import { useSession } from "@/hooks/use-sessions";
+import { useState } from "react";
+import { useSession, useDeleteSession } from "@/hooks/use-sessions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { PageHeader } from "@/components/PageHeader";
+import { useToast } from "@/components/ui/use-toast";
 import {
   Accordion,
   AccordionContent,
@@ -10,11 +12,22 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Check,
   Clock,
   Loader2,
   X,
   AlertTriangle,
+  Trash2,
 } from "lucide-react";
 import { cn, formatTime } from "@/lib/utils";
 import { motion } from "framer-motion";
@@ -74,6 +87,9 @@ export default function ResultsPage() {
   const params = useParams<{ id: string }>();
   const [, navigate] = useLocation();
   const { data: session, isLoading, error } = useSession(params.id);
+  const deleteSession = useDeleteSession();
+  const { toast } = useToast();
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   if (isLoading) {
     return (
@@ -174,7 +190,20 @@ export default function ResultsPage() {
 
   return (
     <div className="min-h-screen bg-background pb-10">
-      <PageHeader title="Results" backTo={backTo} />
+      <PageHeader
+        title="Results"
+        backTo={backTo}
+        actions={
+          <button
+            type="button"
+            aria-label="Delete this attempt"
+            onClick={() => setShowDeleteDialog(true)}
+            className="flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        }
+      />
 
       <div className="mx-auto max-w-2xl lg:max-w-4xl px-5 pt-6 space-y-8">
         {/* Hero — Score gauge */}
@@ -523,6 +552,41 @@ export default function ResultsPage() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this attempt?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The session and its scores will be permanently removed from your
+              history. This can't be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async () => {
+                setShowDeleteDialog(false);
+                try {
+                  await deleteSession.mutateAsync(session.id);
+                  toast({ title: "Session deleted" });
+                  navigate("/progress");
+                } catch (err) {
+                  toast({
+                    title: "Couldn't delete session",
+                    description:
+                      err instanceof Error ? err.message : undefined,
+                    variant: "warning",
+                  });
+                }
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

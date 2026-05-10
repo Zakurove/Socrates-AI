@@ -7,6 +7,7 @@ import {
   useUpdateSession,
   useSaveItemResults,
   useSaveQuestionResults,
+  useDeleteSession,
 } from "@/hooks/use-sessions";
 import { SessionTimerRing } from "@/components/SessionTimerRing";
 import { useTimerVisibility } from "@/hooks/useTimerVisibility";
@@ -69,6 +70,7 @@ export default function PracticeModePage() {
   const updateSession = useUpdateSession();
   const saveItemResults = useSaveItemResults();
   const saveQuestionResults = useSaveQuestionResults();
+  const deleteSession = useDeleteSession();
   const { toast } = useToast();
   const timerVisibility = useTimerVisibility();
 
@@ -84,6 +86,7 @@ export default function PracticeModePage() {
   const [checkTimestamps, setCheckTimestamps] = useState<Map<number, number>>(new Map());
   const [timeUp, setTimeUp] = useState(false);
   const [showEndDialog, setShowEndDialog] = useState(false);
+  const [showDiscardDialog, setShowDiscardDialog] = useState(false);
   // P0-4: when we restore a session that's already in overtime or
   // completed state we pause before re-attaching the live timer and
   // ask the user whether to resume the existing run or start fresh.
@@ -722,6 +725,31 @@ export default function PracticeModePage() {
     });
   };
 
+  // Discard the active session (Cancel mid-practice). Removes the session
+  // row + cascaded children so the run never appears in history.
+  const discardSession = async () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setShowDiscardDialog(false);
+    setShowEndDialog(false);
+    if (!sessionId) {
+      navigate(station ? `/station/${station.id}` : "/home");
+      return;
+    }
+    try {
+      await deleteSession.mutateAsync(sessionId);
+      if (station) clearActiveSession(station.id, sessionId);
+      toast({ title: "Session discarded" });
+    } catch (err) {
+      toast({
+        title: "Couldn't discard session",
+        description: err instanceof Error ? err.message : undefined,
+        variant: "warning",
+      });
+    } finally {
+      navigate(station ? `/station/${station.id}` : "/home");
+    }
+  };
+
   // End session
   const endSession = async () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -979,6 +1007,38 @@ export default function PracticeModePage() {
                 End Session
               </AlertDialogAction>
             </AlertDialogFooter>
+            <button
+              type="button"
+              onClick={() => {
+                setShowEndDialog(false);
+                setShowDiscardDialog(true);
+              }}
+              className="mt-2 self-center text-caption text-muted-foreground hover:text-destructive transition-colors"
+            >
+              Discard this session
+            </button>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Discard confirmation (questions phase). */}
+        <AlertDialog open={showDiscardDialog} onOpenChange={setShowDiscardDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Discard this session?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Your progress will be permanently deleted and the session
+                won't appear in your history.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Keep practicing</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={discardSession}
+              >
+                Discard session
+              </AlertDialogAction>
+            </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
       </>
@@ -1131,8 +1191,43 @@ export default function PracticeModePage() {
               {finishCtaLabel}
             </AlertDialogAction>
           </AlertDialogFooter>
+          <button
+            type="button"
+            onClick={() => {
+              setShowEndDialog(false);
+              setShowDiscardDialog(true);
+            }}
+            className="mt-2 self-center text-caption text-muted-foreground hover:text-destructive transition-colors"
+          >
+            Discard this session
+          </button>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Discard confirmation — destructive, two-step so the user doesn't
+          accidentally lose work by tapping the link. */}
+      <AlertDialog open={showDiscardDialog} onOpenChange={setShowDiscardDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard this session?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your progress will be permanently deleted and the session won't
+              appear in your history. Use this when you got interrupted and
+              don't want this run to count.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep practicing</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={discardSession}
+            >
+              Discard session
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {resumeDialog}
     </div>
   );

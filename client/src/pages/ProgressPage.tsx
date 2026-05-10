@@ -1,6 +1,17 @@
-import { useSessions, type SessionListItem } from "@/hooks/use-sessions";
+import { useSessions, useDeleteSession, type SessionListItem } from "@/hooks/use-sessions";
 import { PageHeader } from "@/components/PageHeader";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/components/ui/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   BarChart3,
   Clock,
@@ -11,6 +22,7 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
+  Trash2,
 } from "lucide-react";
 import { cn, formatTime, scoreRampClasses, hasScore } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
@@ -48,6 +60,9 @@ interface StationGroup {
 export default function ProgressPage() {
   const { data: sessions, isLoading } = useSessions();
   const [, navigate] = useLocation();
+  const deleteSession = useDeleteSession();
+  const { toast } = useToast();
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
   const [expandedStation, setExpandedStation] = useState<number | null>(null);
 
@@ -419,6 +434,25 @@ export default function ProgressPage() {
                                           Critical
                                         </Badge>
                                       )}
+                                      <span
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-label="Delete this attempt"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setPendingDeleteId(session.id);
+                                        }}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter" || e.key === " ") {
+                                            e.stopPropagation();
+                                            e.preventDefault();
+                                            setPendingDeleteId(session.id);
+                                          }
+                                        }}
+                                        className="ml-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive cursor-pointer"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </span>
                                     </button>
                                   );
                                 }
@@ -434,6 +468,48 @@ export default function ProgressPage() {
             </div>
           )}
       </div>
+
+      {/* Delete confirmation */}
+      <AlertDialog
+        open={pendingDeleteId !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this attempt?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The session and its scores will be permanently removed from your
+              history. This can't be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async () => {
+                const id = pendingDeleteId;
+                if (id == null) return;
+                setPendingDeleteId(null);
+                try {
+                  await deleteSession.mutateAsync(id);
+                  toast({ title: "Session deleted" });
+                } catch (err) {
+                  toast({
+                    title: "Couldn't delete session",
+                    description:
+                      err instanceof Error ? err.message : undefined,
+                    variant: "warning",
+                  });
+                }
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

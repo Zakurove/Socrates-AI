@@ -146,6 +146,31 @@ router.put("/:id", async (req, res, next) => {
   }
 });
 
+// DELETE /api/sessions/:id — used both to discard an in-progress session
+// (cancel mid-practice) and to remove a finalized session from history
+// (progress / results pages). FK ON DELETE CASCADE takes care of
+// item_results and examiner_question_results.
+router.delete("/:id", async (req, res, next) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid session ID" });
+
+    const existing = await storage.getSession(id);
+    if (!existing) {
+      // Idempotent: deleting an already-deleted session is fine.
+      return res.status(204).end();
+    }
+    if (existing.userId !== req.user!.id) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    await storage.deleteSession(id);
+    return res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/sessions/:id/item-results (batch)
 router.post("/:id/item-results", async (req, res, next) => {
   try {
