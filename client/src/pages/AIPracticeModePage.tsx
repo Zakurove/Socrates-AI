@@ -35,8 +35,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Loader2, MicOff, Square, VolumeX, Volume2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Loader2, MicOff, Square, VolumeX, Volume2, Pause, Play } from "lucide-react";
+import { cn, formatTime } from "@/lib/utils";
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { computeCompositeScore } from "@shared/scoring";
 
@@ -99,6 +99,12 @@ export default function AIPracticeModePage() {
   const createSession = useCreateSession();
   const deleteSession = useDeleteSession();
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
+  const [paused, setPaused] = useState(false);
+  // Remember mute states from before pause so resume restores them.
+  const prePauseMuteRef = useRef<{
+    listen: boolean;
+    gemini: boolean;
+  } | null>(null);
   const updateSession = useUpdateSession();
   const saveItemResults = useSaveItemResults();
   const { toast } = useToast();
@@ -301,7 +307,7 @@ export default function AIPracticeModePage() {
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
-    if (phase === "phase1" || phase === "examiner") {
+    if ((phase === "phase1" || phase === "examiner") && !paused) {
       timerRef.current = setInterval(() => {
         setElapsedSeconds((prev) => prev + 1);
       }, 1000);
@@ -317,7 +323,7 @@ export default function AIPracticeModePage() {
         timerRef.current = null;
       }
     };
-  }, [phase]);
+  }, [phase, paused]);
 
   // ---------------------------------------------------------------------------
   // Begin practice
@@ -446,6 +452,30 @@ export default function AIPracticeModePage() {
 
   // Discard the active AI session — wipes the row + cascades children so
   // it never appears in history.
+  // Pause / resume — freezes the practice timer and mutes both mic
+  // sources so the user's interruption isn't recorded. The pre-pause
+  // mute state is captured so resume restores whatever the user had
+  // explicitly set before pausing.
+  const handlePause = useCallback(() => {
+    prePauseMuteRef.current = {
+      listen: isListenMuted,
+      gemini: gemini.isMuted,
+    };
+    setIsListenMuted(true);
+    gemini.setMuted(true);
+    setPaused(true);
+  }, [gemini, isListenMuted]);
+
+  const handleResume = useCallback(() => {
+    const prev = prePauseMuteRef.current;
+    if (prev) {
+      setIsListenMuted(prev.listen);
+      gemini.setMuted(prev.gemini);
+      prePauseMuteRef.current = null;
+    }
+    setPaused(false);
+  }, [gemini]);
+
   const handleDiscardSession = useCallback(async () => {
     if (autoEndTimerRef.current) {
       clearTimeout(autoEndTimerRef.current);
@@ -472,6 +502,37 @@ export default function AIPracticeModePage() {
     }
     navigate(station ? `/station/${station.id}` : "/home");
   }, [deleteSession, gemini, narration, navigate, station, toast]);
+
+  // Pause overlay — blocks the UI while the timer is paused so the user's
+  // interruption isn't visible to anyone glancing at the screen.
+  const pauseOverlay = paused ? (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/85 backdrop-blur-md"
+      role="dialog"
+      aria-label="Session paused"
+    >
+      <div className="mx-4 max-w-sm w-full rounded-3xl border border-border/60 bg-card p-8 shadow-lg text-center space-y-5">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
+          <Pause className="h-6 w-6" />
+        </div>
+        <div>
+          <h2 className="text-h2 text-foreground">Session paused</h2>
+          <p className="mt-1.5 text-caption text-muted-foreground">
+            Timer is frozen at{" "}
+            <span className="tabular-nums">{formatTime(elapsedSeconds)}</span>.
+            Mic is muted. Resume when you're ready.
+          </p>
+        </div>
+        <Button
+          onClick={handleResume}
+          className="h-12 w-full rounded-full gap-2 text-[15px] font-semibold"
+        >
+          <Play className="h-4 w-4" />
+          Resume
+        </Button>
+      </div>
+    </div>
+  ) : null;
 
   // Reusable discard-confirmation dialog. Rendered at the end of each
   // phase's return JSX so the dialog is available throughout the run.
@@ -1178,8 +1239,16 @@ export default function AIPracticeModePage() {
           </p>
         </div>
 
-        {/* Bottom — a single primary action + a quiet mute toggle. */}
+        {/* Bottom — pause + a single primary action + a quiet mute toggle. */}
         <div className="border-t border-border/60 bg-background/80 px-5 pt-4 pb-6 backdrop-blur-xl">
+          <Button
+            variant="outline"
+            onClick={handlePause}
+            className="mb-2 h-11 w-full rounded-full gap-2 text-[15px] font-semibold"
+          >
+            <Pause className="h-4 w-4" />
+            Pause session
+          </Button>
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -1228,6 +1297,7 @@ export default function AIPracticeModePage() {
           </div>
         </div>
         {discardDialog}
+        {pauseOverlay}
       </div>
     );
   }
@@ -1330,6 +1400,14 @@ export default function AIPracticeModePage() {
 
           <div className="mt-4 flex flex-col items-stretch gap-2">
             <Button
+              variant="outline"
+              onClick={handlePause}
+              className="h-11 rounded-full gap-2 text-[15px] font-semibold"
+            >
+              <Pause className="h-4 w-4" />
+              Pause session
+            </Button>
+            <Button
               variant="default"
               onClick={
                 hasExaminerQuestions ? handleTransitionToExaminer : handleEndSession
@@ -1357,6 +1435,7 @@ export default function AIPracticeModePage() {
           </div>
         </div>
         {discardDialog}
+        {pauseOverlay}
       </div>
     );
   }

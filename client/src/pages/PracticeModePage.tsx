@@ -33,6 +33,8 @@ import {
   Loader2,
   X,
   Check,
+  Pause,
+  Play,
 } from "lucide-react";
 import { cn, formatTime } from "@/lib/utils";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
@@ -87,6 +89,11 @@ export default function PracticeModePage() {
   const [timeUp, setTimeUp] = useState(false);
   const [showEndDialog, setShowEndDialog] = useState(false);
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
+  const [paused, setPaused] = useState(false);
+  // Elapsed snapshot captured at the moment the user paused. The timer
+  // effect re-anchors `practiceStartedAtRef` against this on resume so
+  // elapsedSeconds continues from where it left off.
+  const pausedElapsedRef = useRef<number | null>(null);
   // P0-4: when we restore a session that's already in overtime or
   // completed state we pause before re-attaching the live timer and
   // ask the user whether to resume the existing run or start fresh.
@@ -413,6 +420,15 @@ export default function PracticeModePage() {
   useEffect(() => {
     if (phase !== "practice") return;
     if (resumePrompt) return; // P0-4: hold timer while user decides
+    if (paused) return; // user paused — freeze the timer
+    // On resume after pause, rebase the anchor so the count picks up
+    // where it stopped instead of jumping forward by the paused-for
+    // duration.
+    if (pausedElapsedRef.current != null) {
+      practiceStartedAtRef.current =
+        Date.now() - pausedElapsedRef.current * 1000;
+      pausedElapsedRef.current = null;
+    }
     if (practiceStartedAtRef.current == null) {
       practiceStartedAtRef.current = Date.now() - elapsedSeconds * 1000;
     }
@@ -441,7 +457,7 @@ export default function PracticeModePage() {
       if (timerRef.current) clearInterval(timerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, totalSeconds, playBeep, resumePrompt]);
+  }, [phase, totalSeconds, playBeep, resumePrompt, paused]);
 
   // A2: Persist on every change
   useEffect(() => {
@@ -724,6 +740,19 @@ export default function PracticeModePage() {
       queryKey: [`/api/mock-exams/${mockId}`],
     });
   };
+
+  // Pause / resume — freezes the elapsed timer and shows a blocking
+  // overlay so the user can step away without the clock ticking or the
+  // checklist staying visible.
+  const handlePause = () => {
+    pausedElapsedRef.current = elapsedSeconds;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    setPaused(true);
+  };
+  const handleResume = () => setPaused(false);
 
   // Discard the active session (Cancel mid-practice). Removes the session
   // row + cascaded children so the run never appears in history.
@@ -1153,9 +1182,17 @@ export default function PracticeModePage() {
         </div>
       </div>
 
-      {/* Sticky bottom bar — finish CTA */}
+      {/* Sticky bottom bar — pause + finish CTA */}
       <div className="fixed bottom-0 left-0 right-0 z-30 backdrop-blur-xl bg-background/80 border-t border-border/40 px-5 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-        <div className="mx-auto max-w-lg">
+        <div className="mx-auto max-w-lg space-y-2">
+          <Button
+            variant="outline"
+            onClick={handlePause}
+            className="h-11 w-full rounded-full gap-2 text-[15px] font-semibold transition-transform active:scale-[0.98]"
+          >
+            <Pause className="h-4 w-4" />
+            Pause session
+          </Button>
           <Button
             variant={hasExaminerQuestions ? "default" : "outline"}
             onClick={() => setShowEndDialog(true)}
@@ -1203,6 +1240,39 @@ export default function PracticeModePage() {
           </button>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Pause overlay — blocks the checklist while paused so the user
+          doesn't accidentally keep practicing or expose answers. */}
+      {paused && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/85 backdrop-blur-md"
+          role="dialog"
+          aria-label="Session paused"
+        >
+          <div className="mx-4 max-w-sm w-full rounded-3xl border border-border/60 bg-card p-8 shadow-lg text-center space-y-5">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <Pause className="h-6 w-6" />
+            </div>
+            <div>
+              <h2 className="text-h2 text-foreground">Session paused</h2>
+              <p className="mt-1.5 text-caption text-muted-foreground">
+                Timer is frozen at{" "}
+                <span className="tabular-nums">
+                  {formatTime(elapsedSeconds)}
+                </span>
+                . Resume when you're ready.
+              </p>
+            </div>
+            <Button
+              onClick={handleResume}
+              className="h-12 w-full rounded-full gap-2 text-[15px] font-semibold"
+            >
+              <Play className="h-4 w-4" />
+              Resume
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Discard confirmation — destructive, two-step so the user doesn't
           accidentally lose work by tapping the link. */}
