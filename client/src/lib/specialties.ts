@@ -12,6 +12,9 @@
  * the simplest behavior, can refine later).
  */
 export const SPECIALTIES = [
+  // Pinned to the top — founder's specialty.
+  "Physiatry / PM&R",
+
   // Core / generalist
   "Family Medicine",
   "Internal Medicine",
@@ -47,7 +50,6 @@ export const SPECIALTIES = [
   "Neurology",
   "Ophthalmology",
   "Pathology",
-  "Physiatry / PM&R",
   "Radiology",
 
   "Other",
