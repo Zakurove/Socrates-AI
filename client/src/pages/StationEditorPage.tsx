@@ -1045,15 +1045,54 @@ export default function StationEditorPage() {
   );
 
   // Checklist key-point operations
-  const addChecklistKeyPoint = useCallback((qId: string) => {
+  const addChecklistKeyPoint = useCallback((qId: string): string | null => {
+    const newId = genId();
+    let inserted = false;
     setQuestions((prev) =>
       prev.map((q) => {
         if (q.id !== qId) return q;
         const pts = q.keyPoints ?? [];
-        return { ...q, keyPoints: [...pts, { id: genId(), text: "" }] };
+        inserted = true;
+        return { ...q, keyPoints: [...pts, { id: newId, text: "" }] };
       }),
     );
+    return inserted ? newId : null;
   }, []);
+
+  // Enter inside a checklist-item input: jump to the next item if it
+  // exists, otherwise append a new blank one and focus it. Skips the
+  // default form-submit. Authors building "list the triggers of..."
+  // questions can fly through rows like a notes app.
+  const handleChecklistKeyDown = useCallback(
+    (
+      e: React.KeyboardEvent<HTMLInputElement>,
+      qId: string,
+      kpId: string,
+    ) => {
+      if (e.key !== "Enter" || e.shiftKey) return;
+      e.preventDefault();
+      const q = questions.find((qq) => qq.id === qId);
+      const pts = q?.keyPoints ?? [];
+      const idx = pts.findIndex((p) => p.id === kpId);
+      const nextExisting = idx >= 0 ? pts[idx + 1] : undefined;
+      const focusInput = (id: string) => {
+        requestAnimationFrame(() => {
+          const el = document.querySelector<HTMLInputElement>(
+            `[data-kp-input="${id}"]`,
+          );
+          el?.focus();
+          el?.select?.();
+        });
+      };
+      if (nextExisting) {
+        focusInput(nextExisting.id);
+        return;
+      }
+      const newId = addChecklistKeyPoint(qId);
+      if (newId) focusInput(newId);
+    },
+    [questions, addChecklistKeyPoint],
+  );
 
   const updateChecklistKeyPoint = useCallback(
     (qId: string, kpId: string, text: string) => {
@@ -2572,6 +2611,14 @@ export default function StationEditorPage() {
                                                     e.target.value,
                                                   )
                                                 }
+                                                onKeyDown={(e) =>
+                                                  handleChecklistKeyDown(
+                                                    e,
+                                                    q.id,
+                                                    kp.id,
+                                                  )
+                                                }
+                                                data-kp-input={kp.id}
                                                 className="h-11 flex-1 rounded-xl border-0 bg-muted/30 px-4 text-body"
                                               />
                                               <button
