@@ -2486,10 +2486,36 @@ export default function StationEditorPage() {
                                   }
                                 >
                                   <SelectTrigger
-                                    className="h-9 w-auto min-w-[150px] rounded-lg border border-border/40 bg-card px-2 text-caption"
+                                    className="h-9 w-auto min-w-[150px] max-w-[220px] rounded-lg border border-border/40 bg-card px-2 text-caption"
                                     aria-label="Question type"
                                   >
-                                    <SelectValue />
+                                    {/* Render a clean short-label trigger
+                                        instead of <SelectValue/>, which would
+                                        mirror the SelectItem's full content
+                                        (icon + label + long sublabel) and
+                                        overflow the pill. */}
+                                    <span className="inline-flex items-center gap-1.5 truncate">
+                                      {qType === "free_text" && (
+                                        <TextIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                      )}
+                                      {qType === "multiple_choice" && (
+                                        <CircleDot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                      )}
+                                      {qType === "multi_select" && (
+                                        <CheckSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                      )}
+                                      {qType === "checklist" && (
+                                        <ListChecks className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                      )}
+                                      <span className="truncate">
+                                        {qType === "free_text" && "Free text"}
+                                        {qType === "multiple_choice" &&
+                                          "Multiple choice"}
+                                        {qType === "multi_select" &&
+                                          "Multi-select"}
+                                        {qType === "checklist" && "Checklist"}
+                                      </span>
+                                    </span>
                                   </SelectTrigger>
                                   <SelectContent className="rounded-xl">
                                     <SelectItem value="free_text">

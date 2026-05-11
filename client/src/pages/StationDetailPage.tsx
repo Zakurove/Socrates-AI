@@ -924,11 +924,11 @@ function ExaminerQuestionCard({
   return (
     <div className="rounded-2xl border border-border/60 bg-card shadow-card overflow-hidden">
       {/* Header strip */}
-      <div className="flex items-start gap-3 px-5 pt-5">
+      <div className="flex items-start gap-3 px-5 pt-5 pb-5">
         <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[13px] font-semibold tabular-nums text-primary">
           {index}
         </span>
-        <div className="min-w-0 flex-1 space-y-2">
+        <div className="min-w-0 flex-1 space-y-3">
           <p className="text-[17px] font-semibold leading-snug text-foreground">
             {q.question}
           </p>
