@@ -12,7 +12,13 @@ import {
   Globe2,
   Copy,
   Flag,
+  Eye,
   EyeOff,
+  Check,
+  ListChecks,
+  CircleDot,
+  CheckSquare,
+  Type as TypeIcon,
 } from "lucide-react";
 
 import { useStation, useDeleteStation } from "@/hooks/use-stations";
@@ -303,7 +309,11 @@ export default function StationDetailPage() {
   const { user } = useAuth();
   const { toast } = useToast();
 
-  const [showAnswers, setShowAnswers] = useState<Record<number, boolean>>({});
+  // Per-Q hide overrides. Default behavior is "answers visible by default";
+  // the user can hide individual answers or use the section-wide toggle.
+  // True in this map = explicitly hidden for that Q.
+  const [hiddenAnswers, setHiddenAnswers] = useState<Record<number, boolean>>({});
+  const [hideAllAnswers, setHideAllAnswers] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showPracticeSheet, setShowPracticeSheet] = useState(false);
   const [showBriefing, setShowBriefing] = useState(false);
@@ -722,11 +732,33 @@ export default function StationDetailPage() {
           </Accordion>
         </section>
 
-        {/* Examiner Questions */}
+        {/* Examiner Questions — designed for studying: answers shown by
+            default, big readable typography, per-type rendering. */}
         <section className="mb-10">
-          <h2 className="mb-4 font-display text-h2 text-foreground">
-            Examiner questions
-          </h2>
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h2 className="font-display text-h2 text-foreground">
+              Examiner questions
+            </h2>
+            {station.examinerQuestions.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setHideAllAnswers((v) => !v);
+                  // Also clear per-Q overrides so the global toggle wins.
+                  setHiddenAnswers({});
+                }}
+                className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1.5 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                aria-pressed={hideAllAnswers}
+              >
+                {hideAllAnswers ? (
+                  <Eye className="h-3.5 w-3.5" aria-hidden />
+                ) : (
+                  <EyeOff className="h-3.5 w-3.5" aria-hidden />
+                )}
+                {hideAllAnswers ? "Show answers" : "Hide answers"}
+              </button>
+            )}
+          </div>
 
           {station.examinerQuestions.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border/70 bg-card/40 p-6 text-center">
@@ -741,73 +773,25 @@ export default function StationDetailPage() {
               </button>
             </div>
           ) : (
-            <div className="overflow-hidden rounded-2xl border border-border/60 bg-card shadow-card">
+            <div className="space-y-3">
               {[...station.examinerQuestions]
                 .sort((a, b) => a.order - b.order)
                 .map((q, qi) => {
-                  const isOpen = !!showAnswers[q.id];
+                  const explicitlyHidden = !!hiddenAnswers[q.id];
+                  const isHidden = hideAllAnswers || explicitlyHidden;
                   return (
-                    <div
+                    <ExaminerQuestionCard
                       key={q.id}
-                      className="border-b border-border/40 px-5 py-4 last:border-b-0"
-                    >
-                      <div className="flex items-start gap-3">
-                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-caption font-semibold tabular-nums text-primary">
-                          {qi + 1}
-                        </span>
-                        <p className="min-w-0 flex-1 text-body font-medium text-foreground">
-                          {q.question}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() =>
-                          setShowAnswers((prev) => ({
-                            ...prev,
-                            [q.id]: !prev[q.id],
-                          }))
-                        }
-                        className="ml-9 mt-2 flex min-h-[44px] items-center gap-1 text-caption font-medium text-brand-accent transition-colors hover:text-brand-accent/80"
-                        aria-expanded={isOpen}
-                      >
-                        {isOpen ? "Hide answer" : "Show answer"}
-                        <ChevronDown
-                          className={cn(
-                            "h-3 w-3 transition-transform",
-                            isOpen && "rotate-180",
-                          )}
-                        />
-                      </button>
-                      {isOpen && (
-                        <motion.div
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          transition={{ duration: 0.18 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="ml-9 mt-3 rounded-xl bg-warm-100/60 p-4">
-                            <p className="whitespace-pre-wrap text-caption text-warm-800">
-                              {q.idealAnswer}
-                            </p>
-                            {q.keyPoints && q.keyPoints.length > 0 && (
-                              <ul className="mt-3 space-y-1 border-t border-border/40 pt-3">
-                                {q.keyPoints.map((kp, ki) => (
-                                  <li
-                                    key={ki}
-                                    className="flex gap-2 text-caption text-warm-800"
-                                  >
-                                    <span
-                                      aria-hidden
-                                      className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-warm-600"
-                                    />
-                                    <span>{kp}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
-                        </motion.div>
-                      )}
-                    </div>
+                      q={q}
+                      index={qi + 1}
+                      isHidden={isHidden}
+                      onToggleHide={() =>
+                        setHiddenAnswers((prev) => ({
+                          ...prev,
+                          [q.id]: !prev[q.id],
+                        }))
+                      }
+                    />
                   );
                 })}
             </div>
@@ -896,5 +880,251 @@ export default function StationDetailPage() {
         targetLabel={station.title}
       />
     </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Examiner question card — study-friendly per-type rendering.
+// ────────────────────────────────────────────────────────────────────
+
+interface ExaminerQuestionLike {
+  id: number;
+  question: string;
+  questionType?: string;
+  idealAnswer?: string | null;
+  keyPoints?: string[] | null;
+  config?: {
+    options?: Array<{ text: string; isCorrect: boolean }>;
+    threshold?: number;
+  } | null;
+}
+
+const TYPE_LABELS: Record<string, { label: string; icon: any }> = {
+  free_text: { label: "Free text", icon: TypeIcon },
+  multiple_choice: { label: "Multiple choice", icon: CircleDot },
+  multi_select: { label: "Multi-select", icon: CheckSquare },
+  checklist: { label: "Checklist", icon: ListChecks },
+};
+
+function ExaminerQuestionCard({
+  q,
+  index,
+  isHidden,
+  onToggleHide,
+}: {
+  q: ExaminerQuestionLike;
+  index: number;
+  isHidden: boolean;
+  onToggleHide: () => void;
+}) {
+  const typeKey = q.questionType ?? "free_text";
+  const typeMeta = TYPE_LABELS[typeKey] ?? TYPE_LABELS.free_text;
+  const TypeIconC = typeMeta.icon;
+
+  return (
+    <div className="rounded-2xl border border-border/60 bg-card shadow-card overflow-hidden">
+      {/* Header strip */}
+      <div className="flex items-start gap-3 px-5 pt-5">
+        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[13px] font-semibold tabular-nums text-primary">
+          {index}
+        </span>
+        <div className="min-w-0 flex-1 space-y-2">
+          <p className="text-[17px] font-semibold leading-snug text-foreground">
+            {q.question}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+              <TypeIconC className="h-3 w-3" aria-hidden />
+              {typeMeta.label}
+            </span>
+            {typeKey === "checklist" && q.keyPoints && (
+              <span className="text-[11px] font-medium text-muted-foreground">
+                {q.keyPoints.length} item
+                {q.keyPoints.length === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onToggleHide}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label={isHidden ? "Show answer" : "Hide answer"}
+          title={isHidden ? "Show answer" : "Hide answer"}
+        >
+          {isHidden ? (
+            <Eye className="h-4 w-4" aria-hidden />
+          ) : (
+            <EyeOff className="h-4 w-4" aria-hidden />
+          )}
+        </button>
+      </div>
+
+      {/* Answer body — shown by default; hideable. */}
+      {isHidden ? (
+        <button
+          type="button"
+          onClick={onToggleHide}
+          className="m-5 flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border/70 bg-muted/30 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          aria-label="Show answer"
+        >
+          <Eye className="h-3.5 w-3.5" />
+          Reveal answer
+        </button>
+      ) : (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.18 }}
+          className="border-t border-border/40 bg-warm-50/60 px-5 py-5"
+        >
+          <ExaminerAnswerBody q={q} typeKey={typeKey} />
+        </motion.div>
+      )}
+    </div>
+  );
+}
+
+function ExaminerAnswerBody({
+  q,
+  typeKey,
+}: {
+  q: ExaminerQuestionLike;
+  typeKey: string;
+}) {
+  // Checklist: every keyPoint is an expected item, render as a list.
+  if (typeKey === "checklist") {
+    const items = q.keyPoints ?? [];
+    if (items.length === 0) {
+      return (
+        <p className="text-[14px] italic text-muted-foreground">
+          No expected items added yet.
+        </p>
+      );
+    }
+    return (
+      <>
+        <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+          Expected items · each worth 1 point
+        </p>
+        <ul className="space-y-2">
+          {items.map((kp, ki) => (
+            <li
+              key={ki}
+              className="flex items-start gap-3 text-[15px] leading-relaxed text-foreground"
+            >
+              <span
+                aria-hidden
+                className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+              >
+                <Check className="h-3 w-3" strokeWidth={3} />
+              </span>
+              <span>{kp}</span>
+            </li>
+          ))}
+        </ul>
+      </>
+    );
+  }
+
+  // Multiple choice / multi-select: render the option list with the
+  // correct one(s) highlighted.
+  if (typeKey === "multiple_choice" || typeKey === "multi_select") {
+    const opts = q.config?.options ?? [];
+    if (opts.length === 0) {
+      return (
+        <p className="text-[14px] italic text-muted-foreground">
+          No options configured yet.
+        </p>
+      );
+    }
+    const threshold =
+      typeKey === "multi_select" ? q.config?.threshold : undefined;
+    return (
+      <>
+        <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+          {typeKey === "multiple_choice" ? "Options" : "Options"}
+          {threshold !== undefined && (
+            <span className="ml-2 font-medium normal-case tracking-normal text-muted-foreground/80">
+              {threshold} required for full credit
+            </span>
+          )}
+        </p>
+        <ul className="space-y-1.5">
+          {opts.map((opt, oi) => (
+            <li
+              key={oi}
+              className={cn(
+                "flex items-start gap-3 rounded-xl px-3 py-2.5 text-[15px] leading-relaxed",
+                opt.isCorrect
+                  ? "bg-emerald-500/10 text-foreground"
+                  : "bg-transparent text-muted-foreground",
+              )}
+            >
+              <span
+                aria-hidden
+                className={cn(
+                  "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full",
+                  opt.isCorrect
+                    ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-400"
+                    : "bg-muted text-muted-foreground/60",
+                )}
+              >
+                {opt.isCorrect ? (
+                  <Check className="h-3 w-3" strokeWidth={3} />
+                ) : (
+                  <span className="text-[10px] font-semibold">
+                    {String.fromCharCode(65 + oi)}
+                  </span>
+                )}
+              </span>
+              <span>{opt.text}</span>
+            </li>
+          ))}
+        </ul>
+      </>
+    );
+  }
+
+  // Free text: ideal answer + optional key points to look for.
+  return (
+    <>
+      {q.idealAnswer && (
+        <>
+          <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+            Ideal answer
+          </p>
+          <p className="whitespace-pre-wrap text-[15px] leading-relaxed text-foreground">
+            {q.idealAnswer}
+          </p>
+        </>
+      )}
+      {q.keyPoints && q.keyPoints.length > 0 && (
+        <div className={cn(q.idealAnswer && "mt-4 border-t border-border/40 pt-4")}>
+          <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+            Key points to cover
+          </p>
+          <ul className="space-y-1.5">
+            {q.keyPoints.map((kp, ki) => (
+              <li
+                key={ki}
+                className="flex items-start gap-2.5 text-[14px] leading-relaxed text-foreground"
+              >
+                <span
+                  aria-hidden
+                  className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary/60"
+                />
+                <span>{kp}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {!q.idealAnswer && (!q.keyPoints || q.keyPoints.length === 0) && (
+        <p className="text-[14px] italic text-muted-foreground">
+          No answer added yet.
+        </p>
+      )}
+    </>
   );
 }
