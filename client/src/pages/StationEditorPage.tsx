@@ -1545,7 +1545,13 @@ export default function StationEditorPage() {
     if (!savedStationId) return;
     if (!dirty) return;
     if (!title.trim()) return;
-    if (type !== "qa" && sections.length === 0) return;
+    // Autosave guard: station needs at least *something* — a section with
+    // items or an examiner question. Empty stations (no content at all)
+    // shouldn't autosave on every keystroke.
+    const hasAnyContent =
+      sections.some((s) => s.items.some((i) => i.text.trim())) ||
+      questions.some((q) => q.question.trim());
+    if (!hasAnyContent) return;
     const timeout = setTimeout(async () => {
       try {
         setAutosaveStatus("saving");
@@ -1621,14 +1627,33 @@ export default function StationEditorPage() {
       } else {
         setSectionsError(null);
       }
-    } else if (sections.length === 0) {
-      setSectionsError("Add at least one section");
-      hasError = true;
     } else {
+      // For non-Q&A stations the user can mix checklist sections AND
+      // examiner questions, OR just have examiner questions on their own
+      // (e.g. an autonomic-dysreflexia triggers station with no physical-
+      // exam checklist). Require at least one of the two — sections with
+      // items, or a complete examiner question — and validate any
+      // partially-filled sections.
+      const hasChecklistContent = sections.some((s) =>
+        s.items.some((i) => i.text.trim()),
+      );
+      const hasQuestionContent = questions.some((q) => q.question.trim());
+
+      if (!hasChecklistContent && !hasQuestionContent) {
+        setSectionsError(
+          "Add at least one checklist item or examiner question",
+        );
+        hasError = true;
+      }
+
+      // If the user added a section, it still needs at least one item —
+      // empty sections are a UX bug, not a feature. But sections are no
+      // longer required to exist at all.
       for (const sec of sections) {
         const validItems = sec.items.filter((i) => i.text.trim());
         if (validItems.length === 0) {
-          newItemErrors[sec.id] = "Section must have at least one item with text";
+          newItemErrors[sec.id] =
+            "Section must have at least one item with text";
           hasError = true;
         }
       }
