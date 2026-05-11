@@ -772,6 +772,288 @@ OUTPUT CONTRACT.
   }
 });
 
+// ─── Examiner-phase grading (shared) ─────────────────────────────────────
+// The examiner phase used to run on Gemini Live; we replaced it with the
+// same Whisper transcribe pipeline as narration. These endpoints grade the
+// cumulative examiner transcript against the station's examiner questions.
+//
+// Question types:
+//   - free_text:        graded generously vs idealAnswer + keyPoints
+//   - checklist:        strict per-keyPoint present/missed
+//   - multiple_choice:  tap-only in the UI, skipped here
+//   - multi_select:     tap-only in the UI, skipped here
+
+const examinerQuestionInputSchema = z.object({
+  id: z.number().int(),
+  question: z.string(),
+  questionType: z.enum([
+    "free_text",
+    "multiple_choice",
+    "multi_select",
+    "checklist",
+  ]),
+  idealAnswer: z.string().nullable(),
+  keyPoints: z.array(z.string()).max(50),
+});
+
+const examinerCheckSchema = z
+  .object({
+    transcript: z.string().min(1).max(50_000),
+    questions: z.array(examinerQuestionInputSchema).max(50),
+  })
+  .strict();
+
+type ExaminerQuestionInput = z.infer<typeof examinerQuestionInputSchema>;
+type ExaminerItemOut = {
+  questionId: number;
+  questionType: "free_text" | "checklist";
+  score: number;
+  pointResults?: Array<{ point: string; status: "present" | "missed" }>;
+  match?: string;
+};
+
+function buildExaminerSystemPrompt(): string {
+  return `You are an OSCE examiner grading a spoken Q&A session. The student answered all questions in one continuous transcript (automatic speech-to-text — expect filler words, false starts, mishearings). Attribute student utterances to questions by CONTENT, not by transcript order — they may circle back to earlier questions after moving on.
+
+GRADING PRINCIPLES.
+
+1) WORDING IS FLEXIBLE. Synonyms, abbreviations, paraphrases, and lay terms count. Common equivalences: EF / ejection fraction, MR / mitral regurg / leaky mitral valve, LVH / thick heart muscle, SOB / dyspnoea / short of breath, AC / acromioclavicular, ROM / range of motion.
+
+2) ORDER DOESN'T MATTER. The student can answer questions in any order or revisit earlier ones.
+
+3) FREE-TEXT QUESTIONS (questionType="free_text"): judge how thoroughly the student covered the ideal answer + key points. Score 0..1 generously:
+   - 1.0 = covers all or nearly all of the ideal answer
+   - 0.7-0.9 = most concepts, minor omissions
+   - 0.4-0.6 = on-topic but incomplete (right domain, some points)
+   - 0.2-0.3 = fragmentary attempt
+   - 0.0 = nothing relevant in the transcript
+   Apply select-N-of-K leniency: if the question or ideal answer specifies "give 3", "name two", "list at least two", etc., the listed items are alternatives; covered>=N means full credit. If both numbers conflict, trust the lower (more lenient).
+
+4) CHECKLIST QUESTIONS (questionType="checklist"): every keyPoint is a required item worth 1 point. Mark each independently as "present" or "missed" — synonyms still count as present, but DO NOT apply select-N-of-K leniency. Score = (present count) / (total keypoints). Emit a "points" array, one entry per keyPoint, IN THE SAME ORDER AS GIVEN, status "present" or "missed".
+
+5) MATCH SPAN. For each graded question, return a verbatim short span (<=200 chars) from the transcript that you used as the student's answer. Empty string when nothing relevant was said. Never invent text.
+
+6) CONFIDENCE FLOOR. If the transcript truly has nothing about that question, return score=0 (so the UI shows the empty state). Do not drop or invent question ids.
+
+OUTPUT.
+Return ONLY a JSON object: {"items":[{"questionId":<id>,"score":0..1,"match":"<verbatim span>","points":[{"point":"<keypoint>","status":"present"|"missed"}]}]}.
+- "points" is REQUIRED for checklist questions, omitted or empty for free_text.
+- Exactly one entry per input question id you were given.`;
+}
+
+function buildExaminerUserPrompt(
+  transcript: string,
+  questions: ExaminerQuestionInput[],
+): string {
+  const questionBlock = questions
+    .map((q, i) => {
+      const kp =
+        q.keyPoints.length > 0
+          ? `\n   Key points (in order): ${q.keyPoints.map((k) => `"${k}"`).join(", ")}`
+          : "";
+      const ideal = q.idealAnswer ? `\n   Ideal answer: "${q.idealAnswer}"` : "";
+      return `Question ${i + 1} (id=${q.id}, type=${q.questionType}): "${q.question}"${ideal}${kp}`;
+    })
+    .join("\n\n");
+  return `QUESTIONS:\n${questionBlock}\n\nTRANSCRIPT:\n${transcript}`;
+}
+
+// Parse the LLM response into the wire shape, validating against the
+// canonical question list. checklist questions get a length-matched
+// pointResults array in original keyPoint order; score is recomputed from it.
+function parseExaminerResponse(
+  raw: string,
+  gradable: ExaminerQuestionInput[],
+): ExaminerItemOut[] {
+  let parsed: any = {};
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = { items: [] };
+  }
+  const byId = new Map<number, any>();
+  for (const entry of Array.isArray(parsed.items) ? parsed.items : []) {
+    const qid = Number(entry?.questionId);
+    if (Number.isFinite(qid)) byId.set(qid, entry);
+  }
+
+  const out: ExaminerItemOut[] = [];
+  for (const q of gradable) {
+    const entry = byId.get(q.id);
+    const matchRaw = typeof entry?.match === "string" ? entry.match : "";
+    const match = matchRaw ? matchRaw.slice(0, 200) : undefined;
+
+    if (q.questionType === "checklist") {
+      const rawPoints: Array<Record<string, unknown>> = Array.isArray(
+        entry?.points,
+      )
+        ? entry.points
+        : [];
+      const lookup = new Map<string, "present" | "missed">();
+      rawPoints.forEach((p, i) => {
+        const point = typeof p.point === "string" ? p.point : "";
+        const status: "present" | "missed" =
+          p.status === "present" ? "present" : "missed";
+        lookup.set(point, status);
+        lookup.set(`__idx_${i}`, status);
+      });
+      const pointResults = q.keyPoints.map((kp, i) => ({
+        point: kp,
+        status:
+          lookup.get(kp) ?? lookup.get(`__idx_${i}`) ?? ("missed" as const),
+      }));
+      const presentCount = pointResults.filter(
+        (p) => p.status === "present",
+      ).length;
+      const score =
+        q.keyPoints.length > 0
+          ? Math.round((presentCount / q.keyPoints.length) * 100) / 100
+          : 0;
+      out.push({
+        questionId: q.id,
+        questionType: "checklist",
+        score,
+        pointResults,
+        ...(match ? { match } : {}),
+      });
+    } else {
+      // free_text
+      const rawScore = Number(entry?.score);
+      const score = Number.isFinite(rawScore)
+        ? Math.max(0, Math.min(1, rawScore))
+        : 0;
+      out.push({
+        questionId: q.id,
+        questionType: "free_text",
+        score: Math.round(score * 100) / 100,
+        ...(match ? { match } : {}),
+      });
+    }
+  }
+  return out;
+}
+
+async function runExaminerGrading(
+  gradable: ExaminerQuestionInput[],
+  transcript: string,
+): Promise<{
+  items: ExaminerItemOut[];
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+}> {
+  const sys = buildExaminerSystemPrompt();
+  const user = buildExaminerUserPrompt(transcript, gradable);
+  const completion = await openai.chat.completions.create({
+    model: AI_MODELS.checklistMatcher,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: sys },
+      { role: "user", content: user },
+    ],
+  });
+  const raw = completion.choices[0]?.message?.content ?? "{}";
+  const items = parseExaminerResponse(raw, gradable);
+  return { items, usage: completion.usage as any };
+}
+
+// ─── POST /api/practice/:sessionId/examiner-check ────────────────────────
+// Live grading during the examiner phase. Respects the per-session token
+// cap (returns {items:[], capReached:true} when exhausted).
+router.post("/:sessionId/examiner-check", async (req, res, next) => {
+  try {
+    if (!aiEnabled()) return disabled(res);
+    const sessionId = parseInt(req.params.sessionId, 10);
+    if (isNaN(sessionId)) return res.status(400).json({ error: "bad_session_id" });
+    const owned = await loadOwnedSession(sessionId, req.user!.id);
+    if (!owned) return res.status(404).json({ error: "session_not_found" });
+
+    const parsed = examinerCheckSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "validation_failed" });
+
+    const state = getState(sessionId);
+    if (overCap(state)) {
+      return res.json({ items: [], capReached: true });
+    }
+
+    // Drop tap-only types; they're scored client-side from the user's pick.
+    const gradable = parsed.data.questions.filter(
+      (q) => q.questionType === "free_text" || q.questionType === "checklist",
+    );
+    if (gradable.length === 0) return res.json({ items: [] });
+
+    try {
+      const { items, usage } = await runExaminerGrading(
+        gradable,
+        parsed.data.transcript,
+      );
+      if (usage) {
+        state.tokens += usage.total_tokens ?? 0;
+        await logCost(
+          sessionId,
+          req.user!.id,
+          AI_MODELS.checklistMatcher,
+          usage.prompt_tokens ?? 0,
+          usage.completion_tokens ?? 0,
+        );
+      }
+      return res.json({ items });
+    } catch (err) {
+      console.error(
+        "[practice/examiner-check] openai error:",
+        (err as Error).message,
+      );
+      return providerError(res);
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── POST /api/practice/:sessionId/examiner-final-check ──────────────────
+// Authoritative end-of-session pass: same shape as /examiner-check but
+// ignores the per-session token cap. Source-of-truth for the final grade.
+router.post("/:sessionId/examiner-final-check", async (req, res, next) => {
+  try {
+    if (!aiEnabled()) return disabled(res);
+    const sessionId = parseInt(req.params.sessionId, 10);
+    if (isNaN(sessionId)) return res.status(400).json({ error: "bad_session_id" });
+    const owned = await loadOwnedSession(sessionId, req.user!.id);
+    if (!owned) return res.status(404).json({ error: "session_not_found" });
+
+    const parsed = examinerCheckSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "validation_failed" });
+
+    const gradable = parsed.data.questions.filter(
+      (q) => q.questionType === "free_text" || q.questionType === "checklist",
+    );
+    if (gradable.length === 0) return res.json({ items: [] });
+
+    try {
+      const { items, usage } = await runExaminerGrading(
+        gradable,
+        parsed.data.transcript,
+      );
+      if (usage) {
+        await logCost(
+          sessionId,
+          req.user!.id,
+          AI_MODELS.checklistMatcher,
+          usage.prompt_tokens ?? 0,
+          usage.completion_tokens ?? 0,
+        );
+      }
+      return res.json({ items });
+    } catch (err) {
+      console.error(
+        "[practice/examiner-final-check] openai error:",
+        (err as Error).message,
+      );
+      return providerError(res);
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ─── POST /api/practice/:sessionId/tts ───────────────────────────────────
 const ttsSchema = z.object({ text: z.string().min(1).max(2000) }).strict();
 

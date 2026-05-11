@@ -23,6 +23,12 @@ import { MicButton } from "@/components/practice/MicButton";
 import { ConversationArea } from "@/components/practice/ConversationArea";
 import { PhaseTransition } from "@/components/practice/PhaseTransition";
 import { ReadingPhase } from "@/components/practice/ReadingPhase";
+import {
+  ExaminerNarrationPhase,
+  type CoverageEntry,
+  type ExaminerQuestion as ExaminerNarrationQuestion,
+  type TapAnswer,
+} from "@/components/practice/ExaminerNarrationPhase";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -174,6 +180,35 @@ export default function AIPracticeModePage() {
   // the media stream. For now this is a noop reassurance affordance.
   const [isListenMuted, setIsListenMuted] = useState(false);
 
+  // Listen-mode examiner phase state: live coverage per question + tap
+  // answers for MCQ/multi_select. Held here (above the phase render) so
+  // the data survives final-pass evaluation in handleEndSession.
+  const [examinerCoverage, setExaminerCoverage] = useState<Map<number, CoverageEntry>>(
+    () => new Map(),
+  );
+  const examinerCoverageRef = useRef<Map<number, CoverageEntry>>(examinerCoverage);
+  examinerCoverageRef.current = examinerCoverage;
+  const [examinerTapAnswers, setExaminerTapAnswers] = useState<Map<number, TapAnswer>>(
+    () => new Map(),
+  );
+  const examinerTapAnswersRef = useRef<Map<number, TapAnswer>>(examinerTapAnswers);
+  examinerTapAnswersRef.current = examinerTapAnswers;
+  const [examinerTtsMuted, setExaminerTtsMuted] = useState(false);
+
+  // Stable updater fns so the child's effect deps don't re-fire each parent tick.
+  const updateExaminerCoverage = useCallback(
+    (updater: (prev: Map<number, CoverageEntry>) => Map<number, CoverageEntry>) => {
+      setExaminerCoverage((prev) => updater(prev));
+    },
+    [],
+  );
+  const updateExaminerTapAnswers = useCallback(
+    (updater: (prev: Map<number, TapAnswer>) => Map<number, TapAnswer>) => {
+      setExaminerTapAnswers((prev) => updater(prev));
+    },
+    [],
+  );
+
   // Station data
   const totalSeconds = station ? station.defaultTimeMinutes * 60 : 420;
   const hasExaminerQuestions = station
@@ -258,12 +293,33 @@ export default function AIPracticeModePage() {
       );
   }, [station]);
 
-  // Examiner questions
+  // Examiner questions (slim form, for Gemini persona)
   const examinerQuestions = useMemo(() => {
     if (!station) return [];
     return [...station.examinerQuestions]
       .sort((a, b) => a.order - b.order)
       .map((q) => ({ question: q.question, idealAnswer: q.idealAnswer }));
+  }, [station]);
+
+  // Examiner questions (full form, for the Listen-mode narration phase UI).
+  const examinerNarrationQuestions = useMemo<ExaminerNarrationQuestion[]>(() => {
+    if (!station) return [];
+    return [...station.examinerQuestions]
+      .sort((a, b) => a.order - b.order)
+      .map((q) => ({
+        id: q.id,
+        question: q.question,
+        questionType: ((q as any).questionType ?? "free_text") as
+          | "free_text"
+          | "checklist"
+          | "multiple_choice"
+          | "multi_select",
+        idealAnswer: q.idealAnswer ?? null,
+        keyPoints: (q as any).keyPoints ?? [],
+        config: (q as any).config ?? null,
+        imageUrl: (q as any).imageUrl ?? null,
+        order: q.order,
+      }));
   }, [station]);
 
   // ---------------------------------------------------------------------------
@@ -335,11 +391,15 @@ export default function AIPracticeModePage() {
     async (opts: { skipNarrationStop?: boolean } = {}) => {
       dispatch({ type: "TRANSITION_TO_EXAMINER" });
 
+      // Listen mode: the examiner phase is also Whisper-narration based,
+      // so we stop the phase1 narration (isolates the phase1 transcript)
+      // and start a fresh narration session for the examiner phase below.
+      // Conversation mode keeps its existing Gemini Live wiring.
       if (mode === "listen" && !opts.skipNarrationStop) {
         narration.stop();
       }
 
-      // Wait for overlay display, then switch persona.
+      // Wait for overlay display, then continue.
       setTimeout(async () => {
         if (import.meta.env.DEV) {
           // eslint-disable-next-line no-console
@@ -351,8 +411,19 @@ export default function AIPracticeModePage() {
         try {
           if (mode === "conversation") {
             await gemini.switchPersona("examiner", examinerQuestions);
-          } else {
-            await gemini.connect(station!.id, "examiner");
+          } else if (sessionIdRef.current) {
+            // Restart narration fresh so the examiner transcript is isolated.
+            try {
+              await narration.start(sessionIdRef.current);
+            } catch (err) {
+              if (import.meta.env.DEV) {
+                // eslint-disable-next-line no-console
+                console.warn(
+                  "[AIPracticeModePage] examiner narration start failed",
+                  err,
+                );
+              }
+            }
           }
           dispatch({ type: "TRANSITION_COMPLETE" });
         } catch (err: any) {
@@ -372,7 +443,7 @@ export default function AIPracticeModePage() {
         }
       }, 2000);
     },
-    [mode, narration, gemini, examinerQuestions, station, toast],
+    [mode, narration, gemini, examinerQuestions, toast],
   );
 
   const handleBegin = useCallback(async () => {
@@ -732,7 +803,114 @@ export default function AIPracticeModePage() {
         });
       }
 
-      if (examinerTotal > 0 && transcript.length > 0) {
+      if (examinerTotal > 0 && mode === "listen") {
+        // Listen mode: authoritative final pass uses the narration transcript
+        // (Whisper) + tap answers for MCQ / multi-select. No Gemini transcript.
+        const examinerTranscript = (narration.transcript ?? "").trim();
+        const gradable = stationExaminerQuestions.filter(
+          (q) =>
+            ((q as any).questionType ?? "free_text") === "free_text" ||
+            ((q as any).questionType ?? "free_text") === "checklist",
+        );
+        const finalCoverageMap = new Map<
+          number,
+          { score: number; pointResults?: Array<{ point: string; status: "present" | "missed" }>; match?: string }
+        >();
+        if (gradable.length > 0 && examinerTranscript.length > 0) {
+          try {
+            const evalRes = await fetch(
+              `/api/practice/${sid}/examiner-final-check`,
+              {
+                method: "POST",
+                credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  transcript: examinerTranscript,
+                  questions: gradable.map((q) => ({
+                    id: q.id,
+                    questionType: (q as any).questionType ?? "free_text",
+                    question: q.question,
+                    idealAnswer: q.idealAnswer,
+                    keyPoints: (q as any).keyPoints ?? [],
+                  })),
+                }),
+              },
+            );
+            if (evalRes.ok) {
+              const body = (await evalRes.json()) as {
+                items: Array<{
+                  questionId: number;
+                  score: number;
+                  pointResults?: Array<{ point: string; status: "present" | "missed" }>;
+                  match?: string;
+                }>;
+              };
+              for (const it of body.items) {
+                finalCoverageMap.set(it.questionId, {
+                  score: it.score,
+                  pointResults: it.pointResults,
+                  match: it.match,
+                });
+              }
+            } else if (import.meta.env.DEV) {
+              console.warn(
+                "[AIPracticeModePage] examiner-final-check failed",
+                evalRes.status,
+              );
+            }
+          } catch (evalErr) {
+            if (import.meta.env.DEV) {
+              console.warn(
+                "[AIPracticeModePage] examiner-final-check threw",
+                evalErr,
+              );
+            }
+          }
+        }
+
+        // Build evaluatedExaminerResults from the merged sources:
+        // - free_text / checklist: final-check (or live coverage fallback)
+        // - multiple_choice / multi_select: client-side tap answers
+        const liveCov = examinerCoverageRef.current;
+        const taps = examinerTapAnswersRef.current;
+        for (const q of stationExaminerQuestions) {
+          const qType = ((q as any).questionType ?? "free_text") as
+            | "free_text"
+            | "checklist"
+            | "multiple_choice"
+            | "multi_select";
+          if (qType === "multiple_choice" || qType === "multi_select") {
+            const tap = taps.get(q.id);
+            const score = tap?.submitted ? tap.score : 0;
+            evaluatedExaminerResults.push({
+              questionId: q.id,
+              userAnswerTranscript: "",
+              score,
+              feedback: "",
+            });
+            examinerScores.push(score);
+            continue;
+          }
+          // free_text / checklist
+          const fin = finalCoverageMap.get(q.id);
+          const live = liveCov.get(q.id);
+          // Pick stronger of final-check vs live coverage; if both have point
+          // results, prefer final-check (it's the authoritative pass).
+          const score = Math.max(fin?.score ?? 0, live?.score ?? 0);
+          const pointResults =
+            qType === "checklist"
+              ? fin?.pointResults ?? live?.pointResults
+              : undefined;
+          evaluatedExaminerResults.push({
+            questionId: q.id,
+            userAnswerTranscript: fin?.match ?? "",
+            score,
+            feedback: "",
+            ...(pointResults !== undefined ? { pointResults } : {}),
+          });
+          examinerScores.push(score);
+        }
+      } else if (examinerTotal > 0 && transcript.length > 0) {
         try {
           const evalRes = await fetch(
             "/api/ai/evaluate-examiner-transcript",
@@ -877,6 +1055,7 @@ export default function AIPracticeModePage() {
     }
   }, [
     phase,
+    mode,
     narration,
     gemini,
     flatItems,
@@ -1019,6 +1198,9 @@ export default function AIPracticeModePage() {
   // clears the timer).
   useEffect(() => {
     if (phase !== "examiner") return;
+    // Listen mode never produces Gemini AI turns — auto-end on closing
+    // phrase only applies to Conversation mode's Gemini Live examiner.
+    if (mode !== "conversation") return;
     if (autoEndScheduledRef.current) return;
 
     // Scan only AI turns (examiner utterances). currentAIText is the
@@ -1056,7 +1238,7 @@ export default function AIPracticeModePage() {
         handleEndSession();
       }
     }, 2_500);
-  }, [phase, gemini.turns, gemini.currentAIText, handleEndSession]);
+  }, [phase, mode, gemini.turns, gemini.currentAIText, handleEndSession]);
 
   // Cleanup any scheduled auto-end timer on unmount so it can't fire on a
   // different page.
@@ -1501,7 +1683,44 @@ export default function AIPracticeModePage() {
   }
 
   // ---------------------------------------------------------------------------
-  // Examiner phase
+  // Examiner phase — Listen mode (Whisper-narration pipeline)
+  // ---------------------------------------------------------------------------
+
+  if (phase === "examiner" && mode === "listen") {
+    return (
+      <>
+        <ExaminerNarrationPhase
+          sessionId={sessionId}
+          questions={examinerNarrationQuestions}
+          narration={{
+            transcript: narration.transcript,
+            isListening: narration.isListening,
+            isTranscribing: narration.isTranscribing,
+            chunkError: narration.chunkError,
+          }}
+          totalSeconds={totalSeconds}
+          elapsedSeconds={elapsedSeconds}
+          timerVisibility={timerVisibility}
+          isListenMuted={isListenMuted}
+          setIsListenMuted={setIsListenMuted}
+          ttsMuted={examinerTtsMuted}
+          setTtsMuted={setExaminerTtsMuted}
+          coverage={examinerCoverage}
+          setCoverage={updateExaminerCoverage}
+          tapAnswers={examinerTapAnswers}
+          setTapAnswers={updateExaminerTapAnswers}
+          onPause={handlePause}
+          onEndSession={handleEndSession}
+          onDiscardSession={() => setShowDiscardDialog(true)}
+        />
+        {discardDialog}
+        {pauseOverlay}
+      </>
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Examiner phase — Conversation mode (Gemini Live)
   // ---------------------------------------------------------------------------
 
   if (phase === "examiner") {

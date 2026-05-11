@@ -518,6 +518,24 @@ export default function ResultsPage() {
             </CardContent>
           </Card>
 
+          {/* Time-overage callout — non-destructive amber nudge when the user
+              ran past the station's time limit. In a real OSCE the bell ends
+              the station, so this is purely instructional. */}
+          {timeLimit != null && timeUsed > timeLimit && (
+            <div className="rounded-2xl border border-warning/30 bg-warning/8 px-4 py-3 text-[13px] leading-snug text-foreground">
+              You went{" "}
+              <span className="font-semibold tabular-nums">
+                {formatTime(timeUsed - timeLimit)}
+              </span>{" "}
+              over the{" "}
+              <span className="font-semibold tabular-nums">
+                {formatTime(timeLimit)}
+              </span>{" "}
+              limit. In a real OSCE the bell ends the station — try ending
+              sooner next time.
+            </div>
+          )}
+
           {/* Score breakdown — shown when the station has both checklist and
               examiner content. Hidden for checklist-only (or examiner-only)
               stations since the composite is trivially one part. */}
