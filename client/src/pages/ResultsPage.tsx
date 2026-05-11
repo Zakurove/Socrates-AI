@@ -576,14 +576,37 @@ export default function ResultsPage() {
             </div>
           )}
 
-          {/* Stats row */}
+          {/* Stats row.
+              Examiner-only stations (no checklist items) confused users by
+              showing "0/0 items" — switch the card to a Questions count that
+              actually reflects what was graded. */}
           <div className="grid grid-cols-3 gap-3">
-            <div className="rounded-2xl bg-card border border-border/60 p-4 text-center">
-              <p className="text-caption text-muted-foreground">Items</p>
-              <p className="mt-1 text-h3 tabular-nums text-foreground">
-                {checkedCount}/{totalItems}
-              </p>
-            </div>
+            {totalItems === 0 &&
+            (session.examinerQuestionResults?.length ?? 0) > 0 ? (
+              (() => {
+                const qrs = session.examinerQuestionResults ?? [];
+                const answered = qrs.filter(
+                  (qr) => (effectiveQuestionScore(qr) ?? 0) > 0,
+                ).length;
+                return (
+                  <div className="rounded-2xl bg-card border border-border/60 p-4 text-center">
+                    <p className="text-caption text-muted-foreground">
+                      Questions
+                    </p>
+                    <p className="mt-1 text-h3 tabular-nums text-foreground">
+                      {answered}/{qrs.length}
+                    </p>
+                  </div>
+                );
+              })()
+            ) : (
+              <div className="rounded-2xl bg-card border border-border/60 p-4 text-center">
+                <p className="text-caption text-muted-foreground">Items</p>
+                <p className="mt-1 text-h3 tabular-nums text-foreground">
+                  {checkedCount}/{totalItems}
+                </p>
+              </div>
+            )}
             <div className="rounded-2xl bg-card border border-border/60 p-4 text-center">
               <p className="text-caption text-muted-foreground">Time</p>
               <p className="mt-1 text-h3 tabular-nums text-foreground">

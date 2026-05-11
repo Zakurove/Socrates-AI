@@ -309,6 +309,53 @@ export function ExaminerNarrationPhase({
     return () => clearInterval(id);
   }, [postCheck]);
 
+  // Completion threshold per question type — drives auto-advance.
+  const isQuestionComplete = useCallback(
+    (q: ExaminerQuestion): boolean => {
+      if (q.questionType === "free_text") {
+        const c = coverage.get(q.id);
+        return !!c && c.score >= 0.7;
+      }
+      if (q.questionType === "checklist") {
+        const c = coverage.get(q.id);
+        const kp = q.keyPoints ?? [];
+        if (kp.length === 0) return false;
+        if (!c?.pointResults) return false;
+        const presentSet = new Set(
+          c.pointResults
+            .filter((p) => p.status === "present")
+            .map((p) => p.point),
+        );
+        return kp.every((p) => presentSet.has(p));
+      }
+      if (
+        q.questionType === "multiple_choice" ||
+        q.questionType === "multi_select"
+      ) {
+        return !!tapAnswers.get(q.id)?.submitted;
+      }
+      return false;
+    },
+    [coverage, tapAnswers],
+  );
+
+  // Auto-advance focus when the currently-focused question crosses the
+  // completion threshold. Keeps a one-shot set so manual Prev navigation
+  // back to an already-completed question doesn't re-trigger.
+  const autoAdvancedFromRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    if (!focusedQuestion) return;
+    if (!isQuestionComplete(focusedQuestion)) return;
+    if (autoAdvancedFromRef.current.has(focusedQuestion.id)) return;
+    const nextIdx = questions.findIndex(
+      (q, i) => i > focusIdx && !isQuestionComplete(q),
+    );
+    if (nextIdx < 0) return;
+    autoAdvancedFromRef.current.add(focusedQuestion.id);
+    const t = setTimeout(() => setFocusIdx(nextIdx), 700);
+    return () => clearTimeout(t);
+  }, [coverage, tapAnswers, focusIdx, focusedQuestion, questions, isQuestionComplete]);
+
   // Handle MCQ tap
   const handleMcTap = useCallback(
     (q: ExaminerQuestion, optionIndex: number) => {

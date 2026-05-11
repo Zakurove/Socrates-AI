@@ -993,31 +993,56 @@ export default function AIPracticeModePage() {
 
       if (evaluatedExaminerResults.length > 0) {
         try {
-          await fetch(`/api/sessions/${sid}/question-results`, {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(
-              evaluatedExaminerResults.map((r) => ({
-                questionId: r.questionId,
-                userAnswerTranscript: r.userAnswerTranscript,
-                score: r.score,
-                feedback: r.feedback,
-                // Server stores null for non-checklist questions; only
-                // forward when the evaluator returned a breakdown.
-                ...(r.pointResults !== undefined
-                  ? { pointResults: r.pointResults }
-                  : {}),
-              })),
-            ),
-          });
+          const saveRes = await fetch(
+            `/api/sessions/${sid}/question-results`,
+            {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(
+                evaluatedExaminerResults.map((r) => ({
+                  questionId: r.questionId,
+                  userAnswerTranscript: r.userAnswerTranscript,
+                  score: r.score,
+                  feedback: r.feedback,
+                  // Server stores null for non-checklist questions; only
+                  // forward when the evaluator returned a breakdown.
+                  ...(r.pointResults !== undefined
+                    ? { pointResults: r.pointResults }
+                    : {}),
+                })),
+              ),
+            },
+          );
+          if (!saveRes.ok) {
+            const detail = await saveRes.text().catch(() => "");
+            if (import.meta.env.DEV) {
+              console.warn(
+                "[AIPracticeModePage] save examiner results failed",
+                saveRes.status,
+                detail,
+              );
+            }
+            toast({
+              title: "Couldn't save your answers",
+              description:
+                "The results page may show 0/0. Please retry from your station — your transcript is preserved.",
+              variant: "destructive",
+            });
+          }
         } catch (saveErr) {
           if (import.meta.env.DEV) {
             console.warn(
-              "[AIPracticeModePage] save examiner results failed",
+              "[AIPracticeModePage] save examiner results threw",
               saveErr,
             );
           }
+          toast({
+            title: "Couldn't save your answers",
+            description:
+              "Network blip while saving. Your transcript is preserved.",
+            variant: "destructive",
+          });
         }
       }
 
