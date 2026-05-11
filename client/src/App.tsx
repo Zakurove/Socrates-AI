@@ -41,6 +41,12 @@ const PublicCollectionPage = lazy(() => import("@/pages/PublicCollectionPage"));
 const AuthorProfilePage = lazy(() => import("@/pages/AuthorProfilePage"));
 const AdminReportsPage = lazy(() => import("@/pages/AdminReportsPage"));
 const AdminCorrectionsPage = lazy(() => import("@/pages/AdminCorrectionsPage"));
+const AdminPage = lazy(() => import("@/pages/AdminPage"));
+const AdminUsersPage = lazy(() => import("@/pages/AdminUsersPage"));
+const AdminUserDetailPage = lazy(() => import("@/pages/AdminUserDetailPage"));
+const AdminStationsPage = lazy(() => import("@/pages/AdminStationsPage"));
+const AdminCollectionsPage = lazy(() => import("@/pages/AdminCollectionsPage"));
+const AdminAnalyticsPage = lazy(() => import("@/pages/AdminAnalyticsPage"));
 
 function PageLoader() {
   return (
@@ -110,6 +116,36 @@ function AppRoutes() {
           </Route>
 
           {/* Admin — gated inside the page itself. */}
+          <Route path="/admin">
+            <ProtectedRoute>
+              <AdminPage />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/admin/users">
+            <ProtectedRoute>
+              <AdminUsersPage />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/admin/users/:id">
+            <ProtectedRoute>
+              <AdminUserDetailPage />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/admin/stations">
+            <ProtectedRoute>
+              <AdminStationsPage />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/admin/collections">
+            <ProtectedRoute>
+              <AdminCollectionsPage />
+            </ProtectedRoute>
+          </Route>
+          <Route path="/admin/analytics">
+            <ProtectedRoute>
+              <AdminAnalyticsPage />
+            </ProtectedRoute>
+          </Route>
           <Route path="/admin/reports">
             <ProtectedRoute>
               <AdminReportsPage />

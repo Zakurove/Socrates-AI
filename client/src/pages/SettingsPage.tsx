@@ -374,6 +374,16 @@ export default function SettingsPage() {
             </h2>
             <div className="rounded-2xl bg-card border border-border/60 shadow-card overflow-hidden divide-y divide-border/60">
               <button
+                onClick={() => navigate("/admin")}
+                className="w-full flex items-center gap-3 px-5 py-4 min-h-[56px] text-left transition-colors hover:bg-muted/40"
+              >
+                <ShieldAlert className="h-4 w-4 text-primary" />
+                <span className="flex-1 text-[15px] font-medium text-foreground">
+                  Admin home
+                </span>
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              </button>
+              <button
                 onClick={() => navigate("/admin/reports")}
                 className="w-full flex items-center gap-3 px-5 py-4 min-h-[56px] text-left transition-colors hover:bg-muted/40"
               >
