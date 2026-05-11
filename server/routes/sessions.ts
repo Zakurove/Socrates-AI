@@ -45,6 +45,16 @@ const questionResultSchema = z.object({
   userAnswerTranscript: z.string().optional(),
   score: z.number().min(0).max(1).optional(),
   feedback: z.string().optional(),
+  // For checklist-type questions: per-item present/missed breakdown.
+  pointResults: z
+    .array(
+      z.object({
+        point: z.string().min(1).max(500),
+        status: z.enum(["present", "missed"]),
+      }),
+    )
+    .max(50)
+    .optional(),
 });
 
 // GET /api/sessions
@@ -295,6 +305,7 @@ router.post("/:id/question-results", async (req, res, next) => {
         // be told apart from the matcher's verdict.
         aiScore: q.score ?? null,
         feedback: q.feedback ?? null,
+        pointResults: q.pointResults ?? null,
         correctedAt: null,
         correctionNote: null,
       })),
@@ -403,6 +414,18 @@ const patchQuestionResultSchema = z
   .object({
     score: z.number().min(0).max(1),
     note: z.string().max(500).optional(),
+    // For checklist-type questions: optional per-item present/missed override.
+    // When supplied, the server persists it alongside the new score so the
+    // results page renders the corrected breakdown after a refetch.
+    pointResults: z
+      .array(
+        z.object({
+          point: z.string().min(1).max(500),
+          status: z.enum(["present", "missed"]),
+        }),
+      )
+      .max(50)
+      .optional(),
   })
   .strict();
 
@@ -444,7 +467,15 @@ router.patch(
       const newScore = parsed.data.score;
       const note = parsed.data.note ?? null;
 
-      if (currentScore !== null && newScore === currentScore) {
+      // No-op fast path: same score AND no pointResults override. We still
+      // pass through if pointResults was supplied so a per-item correction
+      // (which can leave the aggregate score unchanged at boundary values)
+      // actually persists.
+      if (
+        currentScore !== null &&
+        newScore === currentScore &&
+        parsed.data.pointResults === undefined
+      ) {
         return res.json({
           questionResult: row,
           sessionTotalScore: session.totalScore ?? 0,
@@ -458,6 +489,13 @@ router.patch(
           score: newScore,
           correctedAt: revertingToAi ? null : new Date(),
           correctionNote: note,
+          // Only overwrite pointResults when the client actually supplied
+          // them — `undefined` leaves the existing column alone so a plain
+          // slider correction on a non-checklist question keeps the row's
+          // existing (null) breakdown.
+          ...(parsed.data.pointResults !== undefined
+            ? { pointResults: parsed.data.pointResults }
+            : {}),
         },
       );
 

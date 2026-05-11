@@ -49,14 +49,21 @@ interface DraftSection {
   items: DraftItem[];
 }
 
+interface DraftChecklistKeyPoint {
+  id: string;
+  text: string;
+}
+
 interface DraftQuestion {
   id: string;
   question: string;
   idealAnswer: string | null;
-  questionType?: "free_text" | "multiple_choice" | "multi_select";
+  questionType?: "free_text" | "multiple_choice" | "multi_select" | "checklist";
   options?: { text: string; isCorrect: boolean }[];
   threshold?: number;
   imageUrl?: string | null;
+  // For "checklist" type: editable list of expected items.
+  keyPoints?: DraftChecklistKeyPoint[];
 }
 
 export interface DraftData {

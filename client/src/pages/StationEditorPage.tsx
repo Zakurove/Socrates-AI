@@ -29,16 +29,20 @@ import {
   Bold,
   BookOpen,
   Check,
+  CheckSquare,
   ChevronDown,
   ChevronRight,
+  CircleDot,
   Image as ImageIcon,
   Italic,
   List as ListIcon,
+  ListChecks,
   Loader2,
   MoreVertical,
   PlayCircle,
   Plus,
   Save,
+  Text as TextIcon,
   Trash2,
   Upload,
   X,
@@ -131,14 +135,29 @@ interface EditorSection {
   items: EditorItem[];
 }
 
+interface ChecklistKeyPoint {
+  id: string;
+  text: string;
+}
+
+type QuestionType =
+  | "free_text"
+  | "multiple_choice"
+  | "multi_select"
+  | "checklist";
+
 interface EditorQuestion {
   id: string;
   question: string;
   idealAnswer: string | null;
-  questionType?: "free_text" | "multiple_choice" | "multi_select";
+  questionType?: QuestionType;
   options?: { text: string; isCorrect: boolean }[];
   threshold?: number;
   imageUrl?: string | null;
+  // For "checklist" type: editable list of expected items. Each item is
+  // worth 1 point. Stored with stable ids so DnD reorder is identity-safe;
+  // serialized to a plain string[] in keyPoints on save.
+  keyPoints?: ChecklistKeyPoint[];
 }
 
 function genId() {
@@ -335,13 +354,26 @@ export default function StationEditorPage() {
       const loadedQuestions: EditorQuestion[] = [...existingStation.examinerQuestions]
         .sort((a, b) => a.order - b.order)
         .map((q: any) => {
-          const qType = q.questionType ?? "free_text";
+          const qType: QuestionType = q.questionType ?? "free_text";
           if (qType === "free_text") {
             return {
               id: genId(),
               question: q.question,
               idealAnswer: q.idealAnswer ?? "",
               questionType: "free_text" as const,
+              keyPoints: Array.isArray(q.keyPoints)
+                ? q.keyPoints.map((t: string) => ({ id: genId(), text: String(t) }))
+                : [],
+            };
+          }
+          if (qType === "checklist") {
+            const pts = Array.isArray(q.keyPoints) ? q.keyPoints : [];
+            return {
+              id: genId(),
+              question: q.question,
+              idealAnswer: null,
+              questionType: "checklist" as const,
+              keyPoints: pts.map((t: string) => ({ id: genId(), text: String(t) })),
             };
           }
           const cfg = q.config ?? {};
@@ -964,13 +996,34 @@ export default function StationEditorPage() {
   );
 
   // Change question type. Initializes config shape for the chosen type.
+  // Preserves keyPoints across free_text <-> checklist switches so user
+  // doesn't lose draft work when toggling.
   const changeQuestionType = useCallback(
-    (qId: string, newType: "free_text" | "multiple_choice" | "multi_select") => {
+    (qId: string, newType: QuestionType) => {
       setQuestions((prev) =>
         prev.map((q) => {
           if (q.id !== qId) return q;
           if (newType === "free_text") {
-            return { ...q, questionType: newType, options: undefined, threshold: undefined };
+            return {
+              ...q,
+              questionType: newType,
+              options: undefined,
+              threshold: undefined,
+              idealAnswer: q.idealAnswer ?? "",
+              // keep keyPoints around so checklist -> free_text -> checklist
+              // round-trips don't lose items
+              keyPoints: q.keyPoints ?? [],
+            };
+          }
+          if (newType === "checklist") {
+            return {
+              ...q,
+              questionType: newType,
+              idealAnswer: null,
+              options: undefined,
+              threshold: undefined,
+              keyPoints: q.keyPoints && q.keyPoints.length > 0 ? q.keyPoints : [],
+            };
           }
           const options = q.options && q.options.length > 0
             ? q.options
@@ -987,6 +1040,74 @@ export default function StationEditorPage() {
           };
         }),
       );
+    },
+    [],
+  );
+
+  // Checklist key-point operations
+  const addChecklistKeyPoint = useCallback((qId: string) => {
+    setQuestions((prev) =>
+      prev.map((q) => {
+        if (q.id !== qId) return q;
+        const pts = q.keyPoints ?? [];
+        return { ...q, keyPoints: [...pts, { id: genId(), text: "" }] };
+      }),
+    );
+  }, []);
+
+  const updateChecklistKeyPoint = useCallback(
+    (qId: string, kpId: string, text: string) => {
+      setQuestions((prev) =>
+        prev.map((q) => {
+          if (q.id !== qId) return q;
+          const pts = (q.keyPoints ?? []).map((p) =>
+            p.id === kpId ? { ...p, text } : p,
+          );
+          return { ...q, keyPoints: pts };
+        }),
+      );
+    },
+    [],
+  );
+
+  const removeChecklistKeyPoint = useCallback(
+    (qId: string, kpId: string) => {
+      setQuestions((prev) =>
+        prev.map((q) => {
+          if (q.id !== qId) return q;
+          const pts = (q.keyPoints ?? []).filter((p) => p.id !== kpId);
+          return { ...q, keyPoints: pts };
+        }),
+      );
+    },
+    [],
+  );
+
+  const reorderChecklistKeyPoints = useCallback(
+    (qId: string, activeId: string, overId: string) => {
+      setQuestions((prev) =>
+        prev.map((q) => {
+          if (q.id !== qId) return q;
+          const pts = q.keyPoints ?? [];
+          const oldIdx = pts.findIndex((p) => p.id === activeId);
+          const newIdx = pts.findIndex((p) => p.id === overId);
+          if (oldIdx < 0 || newIdx < 0) return q;
+          return { ...q, keyPoints: arrayMove(pts, oldIdx, newIdx) };
+        }),
+      );
+    },
+    [],
+  );
+
+  // Reorder the whole examiner-questions list. Vertical-only, no re-leveling.
+  const reorderQuestions = useCallback(
+    (activeId: string, overId: string) => {
+      setQuestions((prev) => {
+        const oldIdx = prev.findIndex((q) => q.id === activeId);
+        const newIdx = prev.findIndex((q) => q.id === overId);
+        if (oldIdx < 0 || newIdx < 0) return prev;
+        return arrayMove(prev, oldIdx, newIdx);
+      });
     },
     [],
   );
@@ -1367,6 +1488,11 @@ export default function StationEditorPage() {
         if (!q.question.trim()) return false;
         const t = q.questionType ?? "free_text";
         if (t === "free_text") return (q.idealAnswer ?? "").trim().length > 0;
+        if (t === "checklist") {
+          // Persist the question shell even if items are empty — author can
+          // come back later. Drops only completely-blank questions.
+          return true;
+        }
         const opts = q.options ?? [];
         return opts.length >= 2 && opts.some((o) => o.isCorrect) && opts.every((o) => o.text.trim());
       })
@@ -1378,6 +1504,19 @@ export default function StationEditorPage() {
             questionType: "free_text" as const,
             idealAnswer: (q.idealAnswer ?? "").trim(),
             keyPoints: [],
+            order: qi,
+          };
+        }
+        if (t === "checklist") {
+          const items = (q.keyPoints ?? [])
+            .map((p) => p.text.trim())
+            .filter((t) => t.length > 0);
+          return {
+            question: q.question.trim(),
+            questionType: "checklist" as const,
+            idealAnswer: null,
+            keyPoints: items,
+            config: null,
             order: qi,
           };
         }
@@ -1468,6 +1607,11 @@ export default function StationEditorPage() {
         if (!q.question.trim()) return false;
         const t = q.questionType ?? "free_text";
         if (t === "free_text") return (q.idealAnswer ?? "").trim().length > 0;
+        if (t === "checklist") {
+          // A checklist question counts as "complete" as long as the prompt
+          // is set — empty items are warned about, not blocked.
+          return true;
+        }
         const opts = q.options ?? [];
         return opts.length >= 2 && opts.some((o) => o.isCorrect);
       });
@@ -1504,6 +1648,15 @@ export default function StationEditorPage() {
           hasError = true;
         } else if (!hasQ && hasA) {
           newQuestionErrors[q.id] = "Add a question or clear the ideal answer.";
+          hasError = true;
+        }
+      } else if (qType === "checklist") {
+        // Checklist questions only need a prompt. Empty-items is a warning
+        // (rendered inline below), not a save blocker. The only error case
+        // is items entered without a prompt — author probably forgot.
+        const filledItems = (q.keyPoints ?? []).filter((p) => p.text.trim());
+        if (!hasQ && filledItems.length > 0) {
+          newQuestionErrors[q.id] = "Add a question or remove this entry.";
           hasError = true;
         }
       } else {
@@ -2224,142 +2377,294 @@ export default function StationEditorPage() {
         {/* ==================== EXAMINER QUESTIONS ==================== */}
         <div>
           <h2 className="mb-4 text-h2 text-foreground">Examiner questions</h2>
-          <div className="space-y-3">
-            {questions.map((q, qi) => {
-              const qType = q.questionType ?? "free_text";
-              const correctCount = (q.options ?? []).filter((o) => o.isCorrect).length;
-              return (
-              <Card key={q.id} className="overflow-hidden rounded-2xl border border-border/40 bg-card p-0 shadow-none">
-                <CardContent className="space-y-3 p-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <Label className="text-label text-muted-foreground">
-                      Q{qi + 1}
-                    </Label>
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={qType}
-                        onChange={(e) =>
-                          changeQuestionType(
-                            q.id,
-                            e.target.value as "free_text" | "multiple_choice" | "multi_select",
-                          )
-                        }
-                        className="h-9 rounded-lg border border-border/40 bg-card px-2 text-caption text-foreground"
-                        aria-label="Question type"
-                      >
-                        <option value="free_text">Free text</option>
-                        <option value="multiple_choice">Multiple choice</option>
-                        <option value="multi_select">Multi-select</option>
-                      </select>
-                      <button
-                        onClick={() => removeQuestion(q.id)}
-                        aria-label="Remove question"
-                        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-destructive"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={(e: DragEndEvent) => {
+              // Vertical-only reorder; questions have no hierarchy.
+              if (!e.over || e.active.id === e.over.id) return;
+              reorderQuestions(String(e.active.id), String(e.over.id));
+            }}
+          >
+            <SortableContext
+              items={questions.map((q) => q.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              <div className="space-y-3">
+                {questions.map((q, qi) => {
+                  const qType = q.questionType ?? "free_text";
+                  const correctCount = (q.options ?? []).filter((o) => o.isCorrect).length;
+                  const checklistItems = q.keyPoints ?? [];
+                  return (
+                    <SortableItem key={q.id} id={q.id}>
+                      {(dragHandle) => (
+                        <Card className="group overflow-hidden rounded-2xl border border-border/40 bg-card p-0 shadow-none">
+                          <CardContent className="space-y-3 p-4">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  className="flex h-7 w-5 shrink-0 cursor-grab touch-none items-center justify-center text-muted-foreground/30 opacity-0 transition-opacity hover:text-muted-foreground group-hover:opacity-100 group-focus-within:opacity-100 active:cursor-grabbing"
+                                  aria-label="Drag question"
+                                  {...dragHandle}
+                                >
+                                  <DotsHandle />
+                                </button>
+                                <Label className="text-label text-muted-foreground">
+                                  Q{qi + 1}
+                                </Label>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Select
+                                  value={qType}
+                                  onValueChange={(v) =>
+                                    changeQuestionType(q.id, v as QuestionType)
+                                  }
+                                >
+                                  <SelectTrigger
+                                    className="h-9 w-auto min-w-[150px] rounded-lg border border-border/40 bg-card px-2 text-caption"
+                                    aria-label="Question type"
+                                  >
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent className="rounded-xl">
+                                    <SelectItem value="free_text">
+                                      <div className="flex items-center gap-2">
+                                        <TextIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                                        <div className="flex flex-col">
+                                          <span className="text-caption font-medium">Free text</span>
+                                          <span className="text-[11px] text-muted-foreground">Compared to an ideal answer.</span>
+                                        </div>
+                                      </div>
+                                    </SelectItem>
+                                    <SelectItem value="multiple_choice">
+                                      <div className="flex items-center gap-2">
+                                        <CircleDot className="h-3.5 w-3.5 text-muted-foreground" />
+                                        <div className="flex flex-col">
+                                          <span className="text-caption font-medium">Multiple choice</span>
+                                          <span className="text-[11px] text-muted-foreground">Pick exactly one correct option.</span>
+                                        </div>
+                                      </div>
+                                    </SelectItem>
+                                    <SelectItem value="multi_select">
+                                      <div className="flex items-center gap-2">
+                                        <CheckSquare className="h-3.5 w-3.5 text-muted-foreground" />
+                                        <div className="flex flex-col">
+                                          <span className="text-caption font-medium">Multi-select</span>
+                                          <span className="text-[11px] text-muted-foreground">Pick all that apply, with a threshold.</span>
+                                        </div>
+                                      </div>
+                                    </SelectItem>
+                                    <SelectItem value="checklist">
+                                      <div className="flex items-center gap-2">
+                                        <ListChecks className="h-3.5 w-3.5 text-muted-foreground" />
+                                        <div className="flex flex-col">
+                                          <span className="text-caption font-medium">Checklist (per-item points)</span>
+                                          <span className="text-[11px] text-muted-foreground">
+                                            Expects a list of items; each one is worth 1 point. Used for things like "list the triggers of...".
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <button
+                                  onClick={() => removeQuestion(q.id)}
+                                  aria-label="Remove question"
+                                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-destructive"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </div>
 
-                  <Input
-                    placeholder="Question..."
-                    value={q.question}
-                    onChange={(e) =>
-                      updateQuestion(q.id, "question", e.target.value)
-                    }
-                    className="h-12 rounded-xl border-0 bg-muted/30 px-4 text-[17px]"
-                  />
+                            <Input
+                              placeholder="Question..."
+                              value={q.question}
+                              onChange={(e) =>
+                                updateQuestion(q.id, "question", e.target.value)
+                              }
+                              className="h-12 rounded-xl border-0 bg-muted/30 px-4 text-[17px]"
+                            />
 
-                  {qType === "free_text" && (
-                    <Textarea
-                      placeholder="Ideal answer..."
-                      value={q.idealAnswer ?? ""}
-                      onChange={(e) =>
-                        updateQuestion(q.id, "idealAnswer", e.target.value)
-                      }
-                      className="min-h-[72px] resize-y rounded-xl border-0 bg-muted/30 px-4 py-3 text-[17px]"
-                    />
-                  )}
+                            {qType === "free_text" && (
+                              <Textarea
+                                placeholder="Ideal answer..."
+                                value={q.idealAnswer ?? ""}
+                                onChange={(e) =>
+                                  updateQuestion(q.id, "idealAnswer", e.target.value)
+                                }
+                                className="min-h-[72px] resize-y rounded-xl border-0 bg-muted/30 px-4 py-3 text-[17px]"
+                              />
+                            )}
 
-                  {(qType === "multiple_choice" || qType === "multi_select") && (
-                    <div className="space-y-2">
-                      <p className="text-caption text-muted-foreground">
-                        {qType === "multiple_choice"
-                          ? "Mark the one correct option."
-                          : "Mark every correct option."}
-                      </p>
-                      {(q.options ?? []).map((opt, oi) => (
-                        <div key={oi} className="flex items-center gap-2">
-                          <input
-                            type={qType === "multiple_choice" ? "radio" : "checkbox"}
-                            name={`q-${q.id}-correct`}
-                            checked={opt.isCorrect}
-                            onChange={(e) =>
-                              updateOption(q.id, oi, { isCorrect: e.target.checked })
-                            }
-                            aria-label={`Option ${oi + 1} is correct`}
-                            className="h-5 w-5 accent-primary"
-                          />
-                          <Input
-                            placeholder={`Option ${oi + 1}`}
-                            value={opt.text}
-                            onChange={(e) =>
-                              updateOption(q.id, oi, { text: e.target.value })
-                            }
-                            className="h-11 flex-1 rounded-xl border-0 bg-muted/30 px-4 text-body"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeOption(q.id, oi)}
-                            aria-label={`Remove option ${oi + 1}`}
-                            disabled={(q.options ?? []).length <= 2}
-                            className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-destructive disabled:cursor-not-allowed disabled:opacity-30"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                      <button
-                        type="button"
-                        onClick={() => addOption(q.id)}
-                        disabled={(q.options ?? []).length >= 10}
-                        className="inline-flex h-9 items-center justify-center gap-2 rounded-full px-3 text-caption font-medium text-muted-foreground transition-smooth hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        Add option
-                      </button>
+                            {qType === "checklist" && (
+                              <div className="space-y-2">
+                                <div>
+                                  <p className="text-caption font-medium text-foreground">
+                                    Expected items
+                                  </p>
+                                  <p className="text-[12px] text-muted-foreground">
+                                    Each item is worth 1 point. Add as many as the answer requires.
+                                  </p>
+                                </div>
+                                <DndContext
+                                  sensors={sensors}
+                                  collisionDetection={closestCenter}
+                                  onDragEnd={(e: DragEndEvent) => {
+                                    if (!e.over || e.active.id === e.over.id) return;
+                                    reorderChecklistKeyPoints(
+                                      q.id,
+                                      String(e.active.id),
+                                      String(e.over.id),
+                                    );
+                                  }}
+                                >
+                                  <SortableContext
+                                    items={checklistItems.map((p) => p.id)}
+                                    strategy={verticalListSortingStrategy}
+                                  >
+                                    <div className="space-y-1.5">
+                                      {checklistItems.map((kp, kpi) => (
+                                        <SortableItem key={kp.id} id={kp.id}>
+                                          {(kpHandle) => (
+                                            <div className="group/kp flex items-center gap-1.5">
+                                              <button
+                                                type="button"
+                                                className="flex h-9 w-5 shrink-0 cursor-grab touch-none items-center justify-center text-muted-foreground/30 opacity-0 transition-opacity hover:text-muted-foreground group-hover/kp:opacity-100 group-focus-within/kp:opacity-100 active:cursor-grabbing"
+                                                aria-label="Drag item"
+                                                {...kpHandle}
+                                              >
+                                                <DotsHandle />
+                                              </button>
+                                              <Input
+                                                placeholder={`Expected item ${kpi + 1}`}
+                                                value={kp.text}
+                                                onChange={(e) =>
+                                                  updateChecklistKeyPoint(
+                                                    q.id,
+                                                    kp.id,
+                                                    e.target.value,
+                                                  )
+                                                }
+                                                className="h-11 flex-1 rounded-xl border-0 bg-muted/30 px-4 text-body"
+                                              />
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  removeChecklistKeyPoint(q.id, kp.id)
+                                                }
+                                                aria-label={`Remove item ${kpi + 1}`}
+                                                className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-destructive"
+                                              >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                              </button>
+                                            </div>
+                                          )}
+                                        </SortableItem>
+                                      ))}
+                                    </div>
+                                  </SortableContext>
+                                </DndContext>
+                                <button
+                                  type="button"
+                                  onClick={() => addChecklistKeyPoint(q.id)}
+                                  className="inline-flex h-9 items-center justify-center gap-2 rounded-full px-3 text-caption font-medium text-muted-foreground transition-smooth hover:bg-muted hover:text-foreground"
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                  Add item
+                                </button>
+                                {checklistItems.filter((p) => p.text.trim()).length === 0 && (
+                                  <p className="text-[12px] text-amber-600">
+                                    A checklist question with no items can't be scored — add at least one expected item before publishing.
+                                  </p>
+                                )}
+                              </div>
+                            )}
 
-                      {qType === "multi_select" && correctCount > 0 && (
-                        <div className="flex items-center gap-2 pt-1">
-                          <Label className="text-caption text-muted-foreground">
-                            Minimum correct to pass
-                          </Label>
-                          <Input
-                            type="number"
-                            min={1}
-                            max={correctCount}
-                            value={q.threshold ?? correctCount}
-                            onChange={(e) =>
-                              updateThreshold(q.id, Math.max(1, parseInt(e.target.value, 10) || 1))
-                            }
-                            className="h-9 w-16 rounded-lg border border-border/40 bg-card px-2 text-body"
-                          />
-                          <span className="text-caption text-muted-foreground">
-                            of {correctCount} correct
-                          </span>
-                        </div>
+                            {(qType === "multiple_choice" || qType === "multi_select") && (
+                              <div className="space-y-2">
+                                <p className="text-caption text-muted-foreground">
+                                  {qType === "multiple_choice"
+                                    ? "Mark the one correct option."
+                                    : "Mark every correct option."}
+                                </p>
+                                {(q.options ?? []).map((opt, oi) => (
+                                  <div key={oi} className="flex items-center gap-2">
+                                    <input
+                                      type={qType === "multiple_choice" ? "radio" : "checkbox"}
+                                      name={`q-${q.id}-correct`}
+                                      checked={opt.isCorrect}
+                                      onChange={(e) =>
+                                        updateOption(q.id, oi, { isCorrect: e.target.checked })
+                                      }
+                                      aria-label={`Option ${oi + 1} is correct`}
+                                      className="h-5 w-5 accent-primary"
+                                    />
+                                    <Input
+                                      placeholder={`Option ${oi + 1}`}
+                                      value={opt.text}
+                                      onChange={(e) =>
+                                        updateOption(q.id, oi, { text: e.target.value })
+                                      }
+                                      className="h-11 flex-1 rounded-xl border-0 bg-muted/30 px-4 text-body"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => removeOption(q.id, oi)}
+                                      aria-label={`Remove option ${oi + 1}`}
+                                      disabled={(q.options ?? []).length <= 2}
+                                      className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-destructive disabled:cursor-not-allowed disabled:opacity-30"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                ))}
+                                <button
+                                  type="button"
+                                  onClick={() => addOption(q.id)}
+                                  disabled={(q.options ?? []).length >= 10}
+                                  className="inline-flex h-9 items-center justify-center gap-2 rounded-full px-3 text-caption font-medium text-muted-foreground transition-smooth hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                  Add option
+                                </button>
+
+                                {qType === "multi_select" && correctCount > 0 && (
+                                  <div className="flex items-center gap-2 pt-1">
+                                    <Label className="text-caption text-muted-foreground">
+                                      Minimum correct to pass
+                                    </Label>
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      max={correctCount}
+                                      value={q.threshold ?? correctCount}
+                                      onChange={(e) =>
+                                        updateThreshold(q.id, Math.max(1, parseInt(e.target.value, 10) || 1))
+                                      }
+                                      className="h-9 w-16 rounded-lg border border-border/40 bg-card px-2 text-body"
+                                    />
+                                    <span className="text-caption text-muted-foreground">
+                                      of {correctCount} correct
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {questionErrors[q.id] && (
+                              <p className="text-caption text-destructive">{questionErrors[q.id]}</p>
+                            )}
+                          </CardContent>
+                        </Card>
                       )}
-                    </div>
-                  )}
-
-                  {questionErrors[q.id] && (
-                    <p className="text-caption text-destructive">{questionErrors[q.id]}</p>
-                  )}
-                </CardContent>
-              </Card>
-            );
-            })}
-          </div>
+                    </SortableItem>
+                  );
+                })}
+              </div>
+            </SortableContext>
+          </DndContext>
           <div className="mt-4 flex justify-center">
             <button
               type="button"

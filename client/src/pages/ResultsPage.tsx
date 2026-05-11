@@ -136,6 +136,11 @@ export default function ResultsPage() {
   const [pendingQuestionScore, setPendingQuestionScore] = useState<
     Record<number, number>
   >({});
+  // Optimistic override for checklist per-item breakdown:
+  // questionResult.id → [{point, status}]. Cleared when the server row catches up.
+  const [pendingPointResults, setPendingPointResults] = useState<
+    Record<number, Array<{ point: string; status: "present" | "missed" }>>
+  >({});
 
   // Drop optimistic overrides once the refetched server row matches the
   // pending value (the source of truth has caught up).
@@ -169,6 +174,33 @@ export default function ResultsPage() {
           changed = true;
         } else {
           next[id as unknown as number] = prev[id as unknown as number];
+        }
+      }
+      return changed ? next : prev;
+    });
+    // Drop optimistic pointResults entries whose server row now matches.
+    setPendingPointResults((prev) => {
+      let changed = false;
+      const next: Record<
+        number,
+        Array<{ point: string; status: "present" | "missed" }>
+      > = {};
+      for (const id in prev) {
+        const row = qrs.find((r) => r.id === Number(id));
+        const serverPoints = row?.pointResults ?? null;
+        const pending = prev[id as unknown as number];
+        if (
+          row &&
+          serverPoints &&
+          serverPoints.length === pending.length &&
+          serverPoints.every(
+            (p, i) =>
+              p.point === pending[i].point && p.status === pending[i].status,
+          )
+        ) {
+          changed = true;
+        } else {
+          next[id as unknown as number] = pending;
         }
       }
       return changed ? next : prev;
@@ -254,6 +286,10 @@ export default function ResultsPage() {
     pendingQuestionScore[qr.id] !== undefined
       ? pendingQuestionScore[qr.id]
       : qr.score;
+  const effectivePointResults = (
+    qr: (typeof session.examinerQuestionResults)[0]
+  ): Array<{ point: string; status: "present" | "missed" }> | null =>
+    pendingPointResults[qr.id] ?? qr.pointResults ?? null;
 
   // Corrections count = leaf items where final status differs from aiStatus +
   // questions where final score differs from aiScore.
@@ -335,18 +371,27 @@ export default function ResultsPage() {
   };
 
   // Same shape for question scores. `nextScore` is 0..1.
+  // `nextPointResults` is optionally forwarded to the server for checklist
+  // questions so the per-item breakdown stays in sync with the new score.
   const applyQuestionCorrection = async (
     qr: (typeof session.examinerQuestionResults)[0],
-    nextScore: number
+    nextScore: number,
+    nextPointResults?: Array<{ point: string; status: "present" | "missed" }>
   ) => {
     const prevScore = effectiveQuestionScore(qr);
-    if (prevScore === nextScore) return;
+    if (prevScore === nextScore && nextPointResults === undefined) return;
     setPendingQuestionScore((p) => ({ ...p, [qr.id]: nextScore }));
+    if (nextPointResults !== undefined) {
+      setPendingPointResults((p) => ({ ...p, [qr.id]: nextPointResults }));
+    }
     try {
       await updateQuestionResult.mutateAsync({
         sessionId: session.id,
         questionResultId: qr.id,
         score: nextScore,
+        ...(nextPointResults !== undefined
+          ? { pointResults: nextPointResults }
+          : {}),
       });
     } catch (err) {
       setPendingQuestionScore((p) => {
@@ -354,6 +399,13 @@ export default function ResultsPage() {
         delete next[qr.id];
         return next;
       });
+      if (nextPointResults !== undefined) {
+        setPendingPointResults((p) => {
+          const next = { ...p };
+          delete next[qr.id];
+          return next;
+        });
+      }
       toast({
         title: "Couldn't save correction",
         description: err instanceof Error ? err.message : undefined,
@@ -750,6 +802,18 @@ export default function ResultsPage() {
                   const pickerOpen = openScorePickerFor === qr.id;
                   // Preset chips fallback (no shadcn Popover in this app).
                   const presets = [0, 0.25, 0.5, 0.75, 1] as const;
+                  const isChecklist =
+                    (qr.question as any)?.questionType === "checklist";
+                  const points = effectivePointResults(qr);
+                  const showChecklistBreakdown =
+                    isChecklist && points && points.length > 0;
+                  const presentCount =
+                    showChecklistBreakdown && points
+                      ? points.filter((p) => p.status === "present").length
+                      : 0;
+                  const totalPoints = showChecklistBreakdown && points
+                    ? points.length
+                    : 0;
                   return (
                     <AccordionItem
                       key={qr.id}
@@ -793,7 +857,93 @@ export default function ResultsPage() {
                             {qr.question.idealAnswer}
                           </p>
                         </div>
-                        {/* Correction strip: badge + Undo, or open-picker pill. */}
+
+                        {/* Checklist: per-item breakdown. Tap an item to
+                            flip present↔missed; score recomputes from the
+                            new covered count. Renders in canonical keyPoint
+                            order so authors see consistent layout across runs. */}
+                        {showChecklistBreakdown && points && (
+                          <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
+                            <div className="flex items-center justify-between px-4 py-2.5 bg-muted/30 border-b border-border/60">
+                              <p className="text-label text-muted-foreground uppercase">
+                                Items covered
+                              </p>
+                              <p className="text-caption tabular-nums text-muted-foreground">
+                                {presentCount} of {totalPoints} —{" "}
+                                {Math.round(
+                                  (presentCount / Math.max(1, totalPoints)) *
+                                    100
+                                )}
+                                %
+                              </p>
+                            </div>
+                            <ul className="divide-y divide-border/60">
+                              {points.map((p, i) => {
+                                const isPresent = p.status === "present";
+                                return (
+                                  <li key={`${qr.id}-${i}`}>
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        const flipped = points.map((pp, j) =>
+                                          j === i
+                                            ? {
+                                                point: pp.point,
+                                                status:
+                                                  pp.status === "present"
+                                                    ? ("missed" as const)
+                                                    : ("present" as const),
+                                              }
+                                            : pp
+                                        );
+                                        const newPresent = flipped.filter(
+                                          (x) => x.status === "present"
+                                        ).length;
+                                        const newScore =
+                                          Math.round(
+                                            (newPresent /
+                                              Math.max(1, flipped.length)) *
+                                              100
+                                          ) / 100;
+                                        await applyQuestionCorrection(
+                                          qr,
+                                          newScore,
+                                          flipped
+                                        );
+                                      }}
+                                      className={cn(
+                                        "w-full flex items-start gap-3 px-4 py-2.5 text-left transition-smooth hover:bg-muted/30"
+                                      )}
+                                      aria-pressed={isPresent}
+                                    >
+                                      <span
+                                        aria-hidden
+                                        className={cn(
+                                          "mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full",
+                                          isPresent
+                                            ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                                            : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                                        )}
+                                      >
+                                        {isPresent ? (
+                                          <Check className="h-3.5 w-3.5" />
+                                        ) : (
+                                          <X className="h-3.5 w-3.5" />
+                                        )}
+                                      </span>
+                                      <span className="text-caption leading-snug text-foreground/90">
+                                        {p.point}
+                                      </span>
+                                    </button>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Correction strip: badge + Undo. Non-checklist
+                            questions also get the slider/preset chips below. */}
                         <div className="flex flex-wrap items-center gap-2">
                           {isCorrected && (
                             <>
@@ -824,19 +974,28 @@ export default function ResultsPage() {
                               </button>
                             </>
                           )}
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setOpenScorePickerFor(pickerOpen ? null : qr.id)
-                            }
-                            className="ml-auto inline-flex items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50 transition-smooth"
-                            aria-expanded={pickerOpen}
-                          >
-                            <Pencil className="h-3 w-3" />
-                            Correct score
-                          </button>
+                          {!showChecklistBreakdown && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setOpenScorePickerFor(
+                                  pickerOpen ? null : qr.id
+                                )
+                              }
+                              className="ml-auto inline-flex items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50 transition-smooth"
+                              aria-expanded={pickerOpen}
+                            >
+                              <Pencil className="h-3 w-3" />
+                              Correct score
+                            </button>
+                          )}
+                          {showChecklistBreakdown && (
+                            <p className="ml-auto text-[11px] text-muted-foreground">
+                              Tap an item to flip present / missed.
+                            </p>
+                          )}
                         </div>
-                        {pickerOpen && (
+                        {pickerOpen && !showChecklistBreakdown && (
                           <div className="rounded-xl border border-border/60 bg-background p-3 space-y-2">
                             <p className="text-[11px] text-muted-foreground">
                               Pick the right score for this answer.

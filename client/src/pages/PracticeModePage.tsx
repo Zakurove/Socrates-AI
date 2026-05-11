@@ -108,6 +108,11 @@ export default function PracticeModePage() {
   >(null);
   const [currentQuestionIdx, setCurrentQuestionIdx] = useState(0);
   const [questionScores, setQuestionScores] = useState<Map<number, number>>(new Map());
+  // Per-question pointResults for checklist-type questions. Carried alongside
+  // `questionScores` so finishQuestions can persist the breakdown.
+  const [questionPointResults, setQuestionPointResults] = useState<
+    Map<number, Array<{ point: string; status: "present" | "missed" }>>
+  >(new Map());
   const [showQuestionAnswer, setShowQuestionAnswer] = useState(false);
   const [isScoringTransition, setIsScoringTransition] = useState(false);
   const restoredRef = useRef(false);
@@ -877,8 +882,12 @@ export default function PracticeModePage() {
     }
   };
 
-  // Score a question
-  const scoreQuestion = (score: number) => {
+  // Score a question. For checklist-type questions, callers also pass the
+  // per-item breakdown so it persists with the score.
+  const scoreQuestion = (
+    score: number,
+    pointResults?: Array<{ point: string; status: "present" | "missed" }>
+  ) => {
     if (!station || isScoringTransition) return;
     const q = [...station.examinerQuestions].sort((a, b) => a.order - b.order)[currentQuestionIdx];
     if (!q) return;
@@ -886,6 +895,12 @@ export default function PracticeModePage() {
     const updatedScores = new Map(questionScores);
     updatedScores.set(q.id, score);
     setQuestionScores(updatedScores);
+    let updatedPointResults = questionPointResults;
+    if (pointResults !== undefined) {
+      updatedPointResults = new Map(questionPointResults);
+      updatedPointResults.set(q.id, pointResults);
+      setQuestionPointResults(updatedPointResults);
+    }
     setShowQuestionAnswer(false);
 
     if (currentQuestionIdx < station.examinerQuestions.length - 1) {
@@ -894,20 +909,33 @@ export default function PracticeModePage() {
         setIsScoringTransition(false);
       }, 150);
     } else {
-      finishQuestions(updatedScores).finally(() => setIsScoringTransition(false));
+      finishQuestions(updatedScores, updatedPointResults).finally(() =>
+        setIsScoringTransition(false)
+      );
     }
   };
 
-  const finishQuestions = async (scoresOverride?: Map<number, number>) => {
+  const finishQuestions = async (
+    scoresOverride?: Map<number, number>,
+    pointResultsOverride?: Map<
+      number,
+      Array<{ point: string; status: "present" | "missed" }>
+    >
+  ) => {
     if (!sessionId || !station) return;
     const scores = scoresOverride ?? questionScores;
+    const pointResultsMap = pointResultsOverride ?? questionPointResults;
     const sortedQuestions = [...station.examinerQuestions].sort(
       (a, b) => a.order - b.order
     );
-    const results = sortedQuestions.map((q) => ({
-      questionId: q.id,
-      score: scores.get(q.id) ?? 0,
-    }));
+    const results = sortedQuestions.map((q) => {
+      const points = pointResultsMap.get(q.id);
+      return {
+        questionId: q.id,
+        score: scores.get(q.id) ?? 0,
+        ...(points !== undefined ? { pointResults: points } : {}),
+      };
+    });
 
     try {
       await saveQuestionResults.mutateAsync({ sessionId, results });
@@ -1319,9 +1347,18 @@ function QuestionsPhase({
   currentQuestionIdx: number;
   showQuestionAnswer: boolean;
   setShowQuestionAnswer: (v: boolean) => void;
-  scoreQuestion: (score: number) => void;
+  scoreQuestion: (
+    score: number,
+    pointResults?: Array<{ point: string; status: "present" | "missed" }>
+  ) => void;
   isScoringTransition: boolean;
-  finishQuestions: (scoresOverride?: Map<number, number>) => Promise<void>;
+  finishQuestions: (
+    scoresOverride?: Map<number, number>,
+    pointResultsOverride?: Map<
+      number,
+      Array<{ point: string; status: "present" | "missed" }>
+    >
+  ) => Promise<void>;
   onEndSession: () => void;
   shouldReduce: boolean;
 }) {
@@ -1332,6 +1369,8 @@ function QuestionsPhase({
   const q = sortedQuestions[currentQuestionIdx];
 
   // Keyboard shortcuts 1/2/3 when answer revealed — free_text only.
+  // Checklist questions use per-item ticks, no overall slider, so the
+  // shortcut would be ambiguous.
   const qType = (q as any)?.questionType ?? "free_text";
   useEffect(() => {
     if (qType !== "free_text") return;
@@ -1412,20 +1451,29 @@ function QuestionBody({
   question: any;
   showAnswer: boolean;
   setShowAnswer: (v: boolean) => void;
-  scoreQuestion: (score: number) => void;
+  scoreQuestion: (
+    score: number,
+    pointResults?: Array<{ point: string; status: "present" | "missed" }>
+  ) => void;
   isScoringTransition: boolean;
 }) {
-  const qType: "free_text" | "multiple_choice" | "multi_select" =
-    question.questionType ?? "free_text";
+  const qType:
+    | "free_text"
+    | "multiple_choice"
+    | "multi_select"
+    | "checklist" = question.questionType ?? "free_text";
   const [mcSelected, setMcSelected] = useState<number | null>(null);
   const [msSelected, setMsSelected] = useState<Set<number>>(new Set());
   const [msSubmitted, setMsSubmitted] = useState(false);
+  // Checklist: which keyPoint indexes the user ticked as "I covered this".
+  const [clChecked, setClChecked] = useState<Set<number>>(new Set());
 
   // Reset local state when question changes
   useEffect(() => {
     setMcSelected(null);
     setMsSelected(new Set());
     setMsSubmitted(false);
+    setClChecked(new Set());
   }, [question.id]);
 
   const image = question.imageUrl ? (
@@ -1435,6 +1483,135 @@ function QuestionBody({
       className="mb-4 max-h-64 w-full rounded-xl object-contain"
     />
   ) : null;
+
+  if (qType === "checklist") {
+    const keyPoints: string[] = Array.isArray(question.keyPoints)
+      ? question.keyPoints
+      : [];
+    // Defensive: a checklist question without keyPoints can't be self-graded
+    // per-item. Fall through to the free_text flow so the user can still
+    // record an overall score and move on.
+    if (keyPoints.length === 0) {
+      return (
+        <>
+          {image}
+          <p className="mb-8 text-base font-medium leading-relaxed">
+            {question.question}
+          </p>
+          <Card className="mb-6">
+            <CardContent className="p-4">
+              <p className="text-sm text-muted-foreground">
+                This checklist question has no items to grade.
+              </p>
+            </CardContent>
+          </Card>
+          <div className="flex justify-center">
+            <Button
+              onClick={() => scoreQuestion(0)}
+              disabled={isScoringTransition}
+              size="lg"
+            >
+              Next
+            </Button>
+          </div>
+        </>
+      );
+    }
+
+    if (!showAnswer) {
+      return (
+        <>
+          {image}
+          <p className="mb-8 text-base font-medium leading-relaxed">
+            {question.question}
+          </p>
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={() => setShowAnswer(true)}
+            className="mb-6 w-full"
+          >
+            Reveal checklist
+          </Button>
+        </>
+      );
+    }
+
+    const coveredCount = clChecked.size;
+    const total = keyPoints.length;
+    const computed = Math.round((coveredCount / total) * 100) / 100;
+
+    return (
+      <>
+        {image}
+        <p className="mb-4 text-base font-medium leading-relaxed">
+          {question.question}
+        </p>
+        <p className="mb-3 text-sm text-muted-foreground">
+          Tick each item you covered in your answer.
+        </p>
+        <div className="space-y-2 mb-4">
+          {keyPoints.map((kp, i) => {
+            const ticked = clChecked.has(i);
+            return (
+              <button
+                key={i}
+                type="button"
+                disabled={isScoringTransition}
+                onClick={() => {
+                  const next = new Set(clChecked);
+                  if (next.has(i)) next.delete(i);
+                  else next.add(i);
+                  setClChecked(next);
+                }}
+                className={cn(
+                  "w-full rounded-xl border px-4 py-3 text-left text-body transition-smooth active:scale-[0.99]",
+                  ticked
+                    ? "border-success/40 bg-success/10 text-success"
+                    : "border-border bg-card hover:border-primary/40"
+                )}
+              >
+                <span className="inline-flex items-start gap-2">
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border",
+                      ticked
+                        ? "border-success bg-success text-white"
+                        : "border-muted-foreground/40 bg-background"
+                    )}
+                  >
+                    {ticked ? <Check className="h-3.5 w-3.5" /> : null}
+                  </span>
+                  <span className="leading-snug">{kp}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <p className="mb-3 text-center text-caption text-muted-foreground">
+          {coveredCount} of {total} covered — {Math.round(computed * 100)}%
+        </p>
+        <div className="flex justify-center">
+          <Button
+            onClick={() =>
+              scoreQuestion(
+                computed,
+                keyPoints.map((p, i) => ({
+                  point: p,
+                  status: clChecked.has(i) ? "present" : "missed",
+                }))
+              )
+            }
+            disabled={isScoringTransition}
+            size="lg"
+          >
+            Save & next
+          </Button>
+        </div>
+      </>
+    );
+  }
 
   if (qType === "multiple_choice") {
     const options: { text: string; isCorrect: boolean }[] =

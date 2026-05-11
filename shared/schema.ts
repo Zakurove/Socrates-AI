@@ -52,12 +52,14 @@ export const examinerQuestionTypeEnum = pgEnum("examiner_question_type", [
   "free_text",
   "multiple_choice",
   "multi_select",
+  "checklist",
 ]);
 
 export const EXAMINER_QUESTION_TYPES = [
   "free_text",
   "multiple_choice",
   "multi_select",
+  "checklist",
 ] as const;
 export type ExaminerQuestionType = (typeof EXAMINER_QUESTION_TYPES)[number];
 
@@ -348,6 +350,10 @@ export const examinerQuestionResults = pgTable("examiner_question_results", {
   // Stays null if the examiner phase never ran.
   aiScore: real("ai_score"),
   feedback: text("feedback"),
+  // For checklist-type questions: per-item present/missed breakdown so the
+  // results page can show which items the student covered or missed.
+  // Null for free_text / multiple_choice / multi_select questions.
+  pointResults: jsonb("point_results").$type<Array<{ point: string; status: "present" | "missed" }>>(),
   correctedAt: timestamp("corrected_at"),
   correctionNote: text("correction_note"),
 });
@@ -962,6 +968,11 @@ export const examinerQuestionPayloadSchema = z
           path: ["idealAnswer"],
         });
       }
+      return;
+    }
+    if (q.questionType === "checklist") {
+      // keyPoints carries the expected items; each item is worth 1 point.
+      // An empty list is allowed at edit time but won't score anything.
       return;
     }
     const parsed = z

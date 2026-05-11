@@ -674,6 +674,7 @@ export default function AIPracticeModePage() {
         userAnswerTranscript: string;
         score: number;
         feedback: string;
+        pointResults?: Array<{ point: string; status: "present" | "missed" }>;
       }> = [];
       const transcript = gemini.fullTranscript?.trim() ?? "";
 
@@ -711,6 +712,9 @@ export default function AIPracticeModePage() {
                   question: q.question,
                   idealAnswer: q.idealAnswer,
                   keyPoints: q.keyPoints ?? [],
+                  // Drives strict per-item scoring server-side for the
+                  // checklist question type.
+                  questionType: (q as any).questionType ?? "free_text",
                 })),
               }),
             },
@@ -722,6 +726,10 @@ export default function AIPracticeModePage() {
                 score: number;
                 userAnswerTranscript: string;
                 feedback: string;
+                pointResults?: Array<{
+                  point: string;
+                  status: "present" | "missed";
+                }>;
               }>;
             };
             evaluatedExaminerResults = body.results;
@@ -782,6 +790,11 @@ export default function AIPracticeModePage() {
                 userAnswerTranscript: r.userAnswerTranscript,
                 score: r.score,
                 feedback: r.feedback,
+                // Server stores null for non-checklist questions; only
+                // forward when the evaluator returned a breakdown.
+                ...(r.pointResults !== undefined
+                  ? { pointResults: r.pointResults }
+                  : {}),
               })),
             ),
           });

@@ -245,6 +245,11 @@ const evaluateTranscriptSchema = z
           question: z.string().min(1).max(2000),
           idealAnswer: z.string().min(1).max(4000),
           keyPoints: z.array(z.string().max(500)).max(50).default([]),
+          // Drives strict per-item scoring for checklist questions. Defaults
+          // to free_text so old clients keep working untouched.
+          questionType: z
+            .enum(["free_text", "multiple_choice", "multi_select", "checklist"])
+            .default("free_text"),
         }),
       )
       .min(1)

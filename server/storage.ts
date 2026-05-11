@@ -170,7 +170,16 @@ export interface IStorage {
           };
         })[];
         examinerQuestionResults: (ExaminerQuestionResult & {
-          question: { question: string; idealAnswer: string };
+          question: {
+            question: string;
+            idealAnswer: string;
+            questionType:
+              | "free_text"
+              | "multiple_choice"
+              | "multi_select"
+              | "checklist";
+            keyPoints: string[] | null;
+          };
         })[];
       })
     | undefined
@@ -1120,7 +1129,16 @@ class DatabaseStorage implements IStorage {
           };
         })[];
         examinerQuestionResults: (ExaminerQuestionResult & {
-          question: { question: string; idealAnswer: string };
+          question: {
+            question: string;
+            idealAnswer: string;
+            questionType:
+              | "free_text"
+              | "multiple_choice"
+              | "multi_select"
+              | "checklist";
+            keyPoints: string[] | null;
+          };
         })[];
       })
     | undefined
@@ -1152,7 +1170,16 @@ class DatabaseStorage implements IStorage {
         examinerQuestionResults: {
           with: {
             question: {
-              columns: { question: true, idealAnswer: true },
+              // questionType + keyPoints are needed by the results page so
+              // checklist questions can render the per-item breakdown
+              // against the canonical keyPoint list (the matcher's
+              // pointResults are validated against it on save).
+              columns: {
+                question: true,
+                idealAnswer: true,
+                questionType: true,
+                keyPoints: true,
+              },
             },
           },
         },

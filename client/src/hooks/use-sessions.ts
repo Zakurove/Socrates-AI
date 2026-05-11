@@ -43,7 +43,22 @@ export type SessionWithDetails = Session & {
     aiScore: number | null;
     correctedAt: string | null;
     correctionNote: string | null;
-    question: { question: string; idealAnswer: string };
+    // Per-keyPoint present/missed breakdown for checklist questions.
+    // Null for free_text / multiple_choice / multi_select.
+    pointResults: Array<{
+      point: string;
+      status: "present" | "missed";
+    }> | null;
+    question: {
+      question: string;
+      idealAnswer: string;
+      questionType:
+        | "free_text"
+        | "multiple_choice"
+        | "multi_select"
+        | "checklist";
+      keyPoints: string[] | null;
+    };
   }>;
   /** Server-derived composite scoring (iter10). Always present on reads. */
   scoring?: ScoringBreakdown;
@@ -177,6 +192,7 @@ export function useSaveQuestionResults() {
         questionId: number;
         score: number;
         feedback?: string;
+        pointResults?: Array<{ point: string; status: "present" | "missed" }>;
       }>;
     }) => {
       const res = await apiRequest(
@@ -267,16 +283,22 @@ export function useUpdateQuestionResult() {
       questionResultId,
       score,
       note,
+      pointResults,
     }: {
       sessionId: number;
       questionResultId: number;
       score: number;
       note?: string;
+      pointResults?: Array<{ point: string; status: "present" | "missed" }>;
     }) => {
       const res = await apiRequest(
         "PATCH",
         `/api/sessions/${sessionId}/question-results/${questionResultId}`,
-        { score, ...(note !== undefined ? { note } : {}) }
+        {
+          score,
+          ...(note !== undefined ? { note } : {}),
+          ...(pointResults !== undefined ? { pointResults } : {}),
+        }
       );
       return (await res.json()) as UpdateQuestionResultResponse;
     },

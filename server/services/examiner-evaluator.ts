@@ -10,11 +10,28 @@ export interface PointResult {
   feedback: string;
 }
 
+/**
+ * Binary per-point breakdown used by the checklist question type. The richer
+ * tri-state PointResult is kept for the legacy free_text path; checklist
+ * questions need strict present/missed for the results UI.
+ */
+export interface BinaryPointResult {
+  point: string;
+  status: "present" | "missed";
+}
+
 export interface EvaluationResult {
   /** Overall score from 0 to 1 */
   score: number;
-  /** Per-key-point results */
+  /** Per-key-point results (tri-state) */
   pointResults: PointResult[];
+  /**
+   * Binary present/missed breakdown — derived from `pointResults` by mapping
+   * partial → missed. Persisted on examiner_question_results.point_results
+   * for checklist questions. Always populated when keyPoints exist; callers
+   * for non-checklist questions are free to ignore it.
+   */
+  binaryPointResults: BinaryPointResult[];
   /** Summary feedback for the student */
   feedback: string;
 }
@@ -45,6 +62,10 @@ export async function evaluateAnswer(
         point: p,
         status: "absent",
         feedback: "No answer provided.",
+      })),
+      binaryPointResults: keyPoints.map((p) => ({
+        point: p,
+        status: "missed",
       })),
       feedback:
         "No answer was provided. Try to give a response even if you are unsure.",
@@ -214,9 +235,17 @@ Respond with ONLY a JSON object in this exact format:
         ? parsed.overallFeedback
         : "Review the key points above.";
 
+    // Map tri-state → binary for the checklist UI. Partial counts as missed:
+    // checklist scoring is strict (every item is a hard requirement).
+    const binaryPointResults: BinaryPointResult[] = pointResults.map((pr) => ({
+      point: pr.point,
+      status: pr.status === "present" ? "present" : "missed",
+    }));
+
     return {
       score: Math.round(score * 100) / 100,
       pointResults,
+      binaryPointResults,
       feedback: overallFeedback,
     };
   } catch (error: any) {
@@ -308,12 +337,14 @@ Respond with ONLY JSON in this exact shape:
     return {
       score: Math.min(1, Math.max(0, Number(parsed.score) || 0)),
       pointResults: [],
+      binaryPointResults: [],
       feedback: parsed.feedback ?? "No detailed feedback available.",
     };
   } catch {
     return {
       score: 0,
       pointResults: [],
+      binaryPointResults: [],
       feedback:
         "Unable to evaluate your answer automatically. Please review the ideal answer.",
     };
@@ -344,6 +375,10 @@ function buildFallbackResult(
       status: "absent" as const,
       feedback: "Unable to evaluate automatically.",
     })),
+    binaryPointResults: keyPoints.map((p) => ({
+      point: p,
+      status: "missed" as const,
+    })),
     feedback:
       "Automatic evaluation encountered an error. Please review the ideal answer and key points manually.",
   };
@@ -359,6 +394,11 @@ export interface TranscriptEvaluationInput {
   question: string;
   idealAnswer: string;
   keyPoints: string[];
+  /**
+   * Examiner question type. Drives strict per-item scoring for "checklist"
+   * questions; other values fall through the existing generous rubric.
+   */
+  questionType: string;
 }
 
 export interface TranscriptEvaluationResult {
@@ -366,6 +406,11 @@ export interface TranscriptEvaluationResult {
   score: number;
   userAnswerTranscript: string;
   feedback: string;
+  /**
+   * Per-keyPoint present/missed breakdown. Populated ONLY when the source
+   * question's questionType === "checklist"; undefined for all other types.
+   */
+  pointResults?: BinaryPointResult[];
 }
 
 export async function evaluateExaminerTranscript(
@@ -379,6 +424,14 @@ export async function evaluateExaminerTranscript(
       score: 0,
       userAnswerTranscript: "",
       feedback: "No answer provided.",
+      ...(q.questionType === "checklist" && q.keyPoints.length > 0
+        ? {
+            pointResults: q.keyPoints.map((p) => ({
+              point: p,
+              status: "missed" as const,
+            })),
+          }
+        : {}),
     }));
   }
 
@@ -406,10 +459,21 @@ export async function evaluateExaminerTranscript(
         q.keyPoints.length > 0
           ? `\n   Key points: ${q.keyPoints.map((k) => `"${k}"`).join(", ")}`
           : "";
-      return `Question ${i + 1} (id=${q.id}): "${q.question}"
+      return `Question ${i + 1} (id=${q.id}, type=${q.questionType}): "${q.question}"
    Ideal answer: "${q.idealAnswer}"${kp}`;
     })
     .join("\n\n");
+
+  // Per-question keyPoints lookup used after parsing to validate the
+  // per-point breakdown matches the canonical list and to short-circuit
+  // partial → missed mapping for checklist questions.
+  const questionMeta = new Map<
+    number,
+    { type: string; keyPoints: string[] }
+  >();
+  for (const q of questions) {
+    questionMeta.set(q.id, { type: q.questionType, keyPoints: q.keyPoints });
+  }
 
   const prompt = `You are a fair, experienced OSCE examiner reviewing a transcript of a spoken Q&A between an AI examiner and a medical student. Your job is to grade what the student actually said, generously crediting partial understanding. Real OSCE examiners do not penalise students for imperfect phrasing or missing one of several points — they give partial credit.
 
@@ -474,11 +538,14 @@ HOW TO GRADE (read carefully):
 
 8. FEEDBACK. For each question give ONE short sentence of constructive feedback ("Nicely covered X; next time also mention Y"). Keep it supportive and specific.
 
+9. CHECKLIST QUESTIONS (questionType="checklist"): every keyPoint is a required answer item worth 1 point. Mark each independently as present or missed. The score = (present count) / (total keypoints). DO NOT apply select-N-of-K leniency for checklist questions — every item is expected, even if the student offered alternatives. Synonyms and paraphrases still count as present (be generous on WORDING, strict on COVERAGE). For checklist questions, emit a "points" array on the response: one entry per keyPoint in the SAME ORDER as listed above, with status "present" or "missed".
+
 OUTPUT:
 Respond with ONLY a JSON array in this exact shape, one entry per question (matching questionId):
 [
-  { "questionId": <id>, "score": 0.0-1.0, "userAnswerTranscript": "<what the student said on this topic, verbatim-ish>", "feedback": "<1 sentence>" }
+  { "questionId": <id>, "score": 0.0-1.0, "userAnswerTranscript": "<what the student said on this topic, verbatim-ish>", "feedback": "<1 sentence>", "points": [ { "point": "<keypoint text>", "status": "present" | "missed" } ] }
 ]
+The "points" array is REQUIRED for checklist questions and should be omitted (or empty) for all other question types.
 
 If the transcript has no Student: lines at all, return score=0 for every question — but NOTE in feedback that no student audio was captured, so Nasser can distinguish "I answered wrong" from "the mic/transcript pipeline broke".`;
 
@@ -554,7 +621,41 @@ If the transcript has no Student: lines at all, return score=0 for every questio
     for (const entry of parsed as Array<Record<string, unknown>>) {
       const qid = Number(entry.questionId);
       if (!Number.isFinite(qid)) continue;
-      const score = Math.min(1, Math.max(0, Number(entry.score) || 0));
+      const meta = questionMeta.get(qid);
+      const rawPoints = Array.isArray(entry.points)
+        ? (entry.points as Array<Record<string, unknown>>)
+        : [];
+
+      let pointResults: BinaryPointResult[] | undefined;
+      let score = Math.min(1, Math.max(0, Number(entry.score) || 0));
+
+      if (meta && meta.type === "checklist" && meta.keyPoints.length > 0) {
+        // Match canonical keyPoint list (by exact text first, then fall back
+        // to positional). Default to "missed" when nothing matches so the
+        // result always has exactly keyPoints.length rows in canonical order.
+        const lookup = new Map<string, "present" | "missed">();
+        rawPoints.forEach((p, i) => {
+          const point = typeof p.point === "string" ? p.point : "";
+          const status =
+            p.status === "present" ? "present" : ("missed" as const);
+          lookup.set(point, status);
+          // Positional fallback so an LLM rephrasing of the keyPoint still
+          // lands on the right slot.
+          lookup.set(`__idx_${i}`, status);
+        });
+        pointResults = meta.keyPoints.map((kp, i) => ({
+          point: kp,
+          status:
+            lookup.get(kp) ?? lookup.get(`__idx_${i}`) ?? ("missed" as const),
+        }));
+        // Recompute score from the per-item breakdown — single source of
+        // truth, matches what the UI will render.
+        const presentCount = pointResults.filter(
+          (p) => p.status === "present",
+        ).length;
+        score = Math.round((presentCount / meta.keyPoints.length) * 100) / 100;
+      }
+
       byId.set(qid, {
         questionId: qid,
         score,
@@ -564,6 +665,7 @@ If the transcript has no Student: lines at all, return score=0 for every questio
             : "",
         feedback:
           typeof entry.feedback === "string" ? entry.feedback : "",
+        ...(pointResults !== undefined ? { pointResults } : {}),
       });
     }
 
