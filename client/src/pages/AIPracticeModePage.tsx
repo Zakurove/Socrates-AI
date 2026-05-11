@@ -1722,6 +1722,7 @@ export default function AIPracticeModePage() {
             isListening: narration.isListening,
             isTranscribing: narration.isTranscribing,
             chunkError: narration.chunkError,
+            analyser: narration.analyser,
           }}
           totalSeconds={totalSeconds}
           elapsedSeconds={elapsedSeconds}
