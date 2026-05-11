@@ -12,7 +12,11 @@ export interface Prefs {
 const DEFAULTS: Prefs = {
   timerSounds: true,
   ttsEnabled: false,
-  theme: "system",
+  // Default to light. Users can opt into dark or "follow system" via
+  // Settings. Previously we defaulted to "system" which flipped folks
+  // on OS dark mode unexpectedly into a dark UI before they'd had a
+  // chance to see the product's intended palette.
+  theme: "light",
 };
 
 const STORAGE_KEY = "socrates-prefs";
@@ -26,7 +30,7 @@ function readPrefs(): Prefs {
     // Migrate older stored values that may lack "system"
     const merged = { ...DEFAULTS, ...parsed } as Prefs;
     if (merged.theme !== "light" && merged.theme !== "dark" && merged.theme !== "system") {
-      merged.theme = "system";
+      merged.theme = "light";
     }
     return merged;
   } catch {
