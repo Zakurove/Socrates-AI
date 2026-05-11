@@ -329,6 +329,52 @@ export default function AIPracticeModePage() {
   // Begin practice
   // ---------------------------------------------------------------------------
 
+  // Core transition body. No phase guard — callers decide. Defined
+  // before handleBegin so the skip-narration path can call it directly.
+  const runExaminerTransition = useCallback(
+    async (opts: { skipNarrationStop?: boolean } = {}) => {
+      dispatch({ type: "TRANSITION_TO_EXAMINER" });
+
+      if (mode === "listen" && !opts.skipNarrationStop) {
+        narration.stop();
+      }
+
+      // Wait for overlay display, then switch persona.
+      setTimeout(async () => {
+        if (import.meta.env.DEV) {
+          // eslint-disable-next-line no-console
+          console.log("[AIPracticeModePage] transitioning to examiner", {
+            mode,
+            questionCount: examinerQuestions.length,
+          });
+        }
+        try {
+          if (mode === "conversation") {
+            await gemini.switchPersona("examiner", examinerQuestions);
+          } else {
+            await gemini.connect(station!.id, "examiner");
+          }
+          dispatch({ type: "TRANSITION_COMPLETE" });
+        } catch (err: any) {
+          if (import.meta.env.DEV) {
+            // eslint-disable-next-line no-console
+            console.error(
+              "[AIPracticeModePage] persona switch / connect failed",
+              err,
+            );
+          }
+          toast({
+            title: "Persona switch failed",
+            description: err?.message || "Could not switch to examiner.",
+            variant: "destructive",
+          });
+          dispatch({ type: "TRANSITION_COMPLETE" });
+        }
+      }, 2000);
+    },
+    [mode, narration, gemini, examinerQuestions, station, toast],
+  );
+
   const handleBegin = useCallback(async () => {
     if (!station) return;
 
@@ -374,13 +420,11 @@ export default function AIPracticeModePage() {
       // Start AI — unless we're skipping narration for an examiner-only
       // station, in which case we go straight to the examiner phase.
       if (skipNarration) {
-        // Dispatch BEGIN so handleTransitionToExaminer's phase guard
-        // accepts the call, then transition immediately. The listening
-        // UI never renders.
-        dispatch({ type: "BEGIN" });
-        // Defer to the next microtask so dispatch's state commit lands
-        // before we read phase in handleTransitionToExaminer.
-        setTimeout(() => handleTransitionToExaminer(), 0);
+        // Don't start narration. Don't render the listening UI. Skip
+        // the phase=phase1 stop entirely — runExaminerTransition
+        // dispatches TRANSITION_TO_EXAMINER which the reducer accepts
+        // from the current state.
+        await runExaminerTransition({ skipNarrationStop: true });
         return;
       }
 
@@ -407,7 +451,7 @@ export default function AIPracticeModePage() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [station, mode, createSession, narration, gemini, toast, hasExaminerQuestions]);
+  }, [station, mode, createSession, narration, gemini, toast, hasExaminerQuestions, runExaminerTransition]);
 
   // ---------------------------------------------------------------------------
   // Trigger detected in narration mode -> auto-transition
@@ -434,52 +478,8 @@ export default function AIPracticeModePage() {
 
   const handleTransitionToExaminer = useCallback(async () => {
     if (phase !== "phase1") return;
-    dispatch({ type: "TRANSITION_TO_EXAMINER" });
-
-    // Stop narration or prepare conversation switch
-    if (mode === "listen") {
-      narration.stop();
-    }
-
-    // Wait for overlay display, then switch persona
-    setTimeout(async () => {
-      if (import.meta.env.DEV) {
-        // eslint-disable-next-line no-console
-        console.log("[AIPracticeModePage] transitioning to examiner", {
-          mode,
-          questionCount: examinerQuestions.length,
-        });
-      }
-      try {
-        if (mode === "conversation") {
-          await gemini.switchPersona("examiner", examinerQuestions);
-        } else {
-          // In listen mode, connect Gemini Live as examiner
-          await gemini.connect(station!.id, "examiner");
-        }
-        dispatch({ type: "TRANSITION_COMPLETE" });
-      } catch (err: any) {
-        if (import.meta.env.DEV) {
-          // eslint-disable-next-line no-console
-          console.error(
-            "[AIPracticeModePage] persona switch / connect failed",
-            err,
-          );
-        }
-        toast({
-          title: "Persona switch failed",
-          description: err?.message || "Could not switch to examiner.",
-          variant: "destructive",
-        });
-        // Still advance to the examiner phase so the user sees the "Start
-        // examiner" retry button rather than being stuck on the transition
-        // overlay. `gemini.isConnected` gates the button — if the connection
-        // failed cleanly, the button stays disabled and the toast explains
-        // what went wrong.
-        dispatch({ type: "TRANSITION_COMPLETE" });
-      }
-    }, 2000);
-  }, [phase, mode, narration, gemini, examinerQuestions, station, toast]);
+    await runExaminerTransition();
+  }, [phase, runExaminerTransition]);
 
   // ---------------------------------------------------------------------------
   // End Session
