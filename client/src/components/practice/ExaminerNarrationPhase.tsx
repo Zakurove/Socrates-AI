@@ -34,7 +34,8 @@ export type TapAnswer = {
   score: number;
 };
 
-const LIVE_CHECK_INTERVAL_MS = 30_000;
+const LIVE_CHECK_INTERVAL_MS = 10_000;
+const LIVE_CHECK_TRANSCRIPT_DELTA = 30; // chars added since last grading
 const AUTO_ADVANCE_DELAY_MS = 600;
 
 export function ExaminerNarrationPhase({
@@ -86,6 +87,13 @@ export function ExaminerNarrationPhase({
 }) {
   const [focusIdx, setFocusIdx] = useState(0);
   const focusedQuestion = questions[focusIdx];
+
+  // Browsers block audio.play() unless invoked synchronously from a fresh
+  // user gesture. The "Begin" tap on the chooser page is too stale by the
+  // time this component mounts (2s transition + fetch). Gate the first
+  // question on an explicit tap so the audio context unlocks; subsequent
+  // questions can autoplay after that.
+  const [started, setStarted] = useState(false);
 
   // Karaoke reveal: word count revealed for the focused question
   const [revealedWords, setRevealedWords] = useState(0);
@@ -183,15 +191,17 @@ export function ExaminerNarrationPhase({
     [cleanupAudio, sessionId, ttsMuted],
   );
 
-  // Play TTS whenever focus changes.
+  // Play TTS whenever focus changes — but only after the user has
+  // unlocked audio via the initial "Begin examiner" tap.
   useEffect(() => {
     if (!focusedQuestion) return;
+    if (!started) return;
     void playTtsForQuestion(focusedQuestion);
     return () => {
       cleanupAudio();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusedQuestion?.id]);
+  }, [focusedQuestion?.id, started]);
 
   useEffect(() => {
     return () => cleanupAudio();
@@ -264,6 +274,18 @@ export function ExaminerNarrationPhase({
     const id = setInterval(() => void postCheck(), LIVE_CHECK_INTERVAL_MS);
     return () => clearInterval(id);
   }, [postCheck]);
+
+  // Eager check: after each Whisper chunk lands, grade as soon as the
+  // transcript has grown meaningfully. Keeps auto-advance snappy without
+  // waiting for the next 10s tick.
+  const lastCheckedLenRef = useRef(0);
+  useEffect(() => {
+    if (narration.isTranscribing) return;
+    const len = narration.transcript.length;
+    if (len - lastCheckedLenRef.current < LIVE_CHECK_TRANSCRIPT_DELTA) return;
+    lastCheckedLenRef.current = len;
+    void postCheck();
+  }, [narration.transcript, narration.isTranscribing, postCheck]);
 
   // ─── Completion threshold + auto-advance ───────────────────────────────
   const isQuestionComplete = useCallback(
@@ -450,7 +472,23 @@ export function ExaminerNarrationPhase({
           </span>
         </div>
 
-        {focusedQuestion.imageUrl && (
+        {!started && (
+          <div className="flex flex-col items-start gap-4">
+            <p className="text-body text-muted-foreground max-w-prose">
+              When you're ready, tap to begin. The examiner will read each
+              question aloud — answer when they finish.
+            </p>
+            <Button
+              variant="default"
+              onClick={() => setStarted(true)}
+              className="h-12 rounded-full px-8 text-[17px] font-semibold"
+            >
+              Begin examiner
+            </Button>
+          </div>
+        )}
+
+        {started && focusedQuestion.imageUrl && (
           <img
             src={focusedQuestion.imageUrl}
             alt=""
@@ -458,30 +496,33 @@ export function ExaminerNarrationPhase({
           />
         )}
 
-        <p
-          className="text-h2 font-display leading-tight text-foreground"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          {words.map((w, i) => (
-            <span
-              key={i}
-              className={cn(
-                "transition-opacity duration-200",
-                i < revealedWords ? "opacity-100" : "opacity-30",
-              )}
-            >
-              {w}
-              {i < words.length - 1 ? " " : ""}
-            </span>
-          ))}
-          {showCursor && (
-            <span className="ml-1 inline-block h-5 w-1.5 animate-pulse rounded-sm bg-brand-accent align-middle" />
-          )}
-        </p>
+        {started && (
+          <p
+            className="text-h2 font-display leading-tight text-foreground"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {words.map((w, i) => (
+              <span
+                key={i}
+                className={cn(
+                  "transition-opacity duration-200",
+                  i < revealedWords ? "opacity-100" : "opacity-30",
+                )}
+              >
+                {w}
+                {i < words.length - 1 ? " " : ""}
+              </span>
+            ))}
+            {showCursor && (
+              <span className="ml-1 inline-block h-5 w-1.5 animate-pulse rounded-sm bg-brand-accent align-middle" />
+            )}
+          </p>
+        )}
 
         {/* MCQ / multi-select tap area — no grading reveal until results */}
-        {focusedQuestion.questionType === "multiple_choice" &&
+        {started &&
+          focusedQuestion.questionType === "multiple_choice" &&
           (() => {
             const options: { text: string; isCorrect: boolean }[] =
               focusedQuestion.config?.options ?? [];
@@ -516,7 +557,8 @@ export function ExaminerNarrationPhase({
             );
           })()}
 
-        {focusedQuestion.questionType === "multi_select" &&
+        {started &&
+          focusedQuestion.questionType === "multi_select" &&
           (() => {
             const options: { text: string; isCorrect: boolean }[] =
               focusedQuestion.config?.options ?? [];
@@ -569,7 +611,8 @@ export function ExaminerNarrationPhase({
           })()}
 
         {/* Skip — escape hatch when STT undershoots on free_text / checklist */}
-        {focusIdx < questions.length - 1 &&
+        {started &&
+          focusIdx < questions.length - 1 &&
           (focusedQuestion.questionType === "free_text" ||
             focusedQuestion.questionType === "checklist") && (
             <button
