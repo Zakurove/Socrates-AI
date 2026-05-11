@@ -10,6 +10,7 @@ import {
   Lock,
   Globe2,
   Star,
+  BookOpen,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
@@ -119,6 +120,56 @@ export default function HomePage() {
   const { data: stats } = useQuery<StatsData>({
     queryKey: ["/api/stats"],
   });
+
+  // "Your stations" preview — up to 3 stations the user owns. Sorted by
+  // most-recent practice if the user has practiced lately, otherwise by
+  // most-recently updated (so a freshly-authored station shows up at
+  // the top even with no practice yet). One row per station.
+  const yourStations = useMemo(() => {
+    const list = stations ?? [];
+    if (list.length === 0) return [] as Array<{
+      id: number;
+      title: string;
+      type: string;
+      lastPracticedAt: string | null;
+      lastScore: number | null;
+    }>;
+    // Build last-practiced lookup from sessions.
+    const lastByStation = new Map<
+      number,
+      { at: string; score: number | null }
+    >();
+    for (const s of completedSessions) {
+      const sid = s.stationId;
+      const prev = lastByStation.get(sid);
+      const raw = s.endedAt ?? s.startedAt;
+      const at = typeof raw === "string" ? raw : new Date(raw).toISOString();
+      if (!prev || new Date(at).getTime() > new Date(prev.at).getTime()) {
+        lastByStation.set(sid, {
+          at,
+          score: s.totalScore ?? null,
+        });
+      }
+    }
+    return [...list]
+      .map((st) => ({
+        id: st.id,
+        title: st.title,
+        type: st.type,
+        lastPracticedAt: lastByStation.get(st.id)?.at ?? null,
+        lastScore: lastByStation.get(st.id)?.score ?? null,
+        // Sort key — prefer last-practiced timestamp, fall back to
+        // updatedAt. Cast through Date so missing values sort low.
+        _sortKey: Math.max(
+          lastByStation.get(st.id)?.at
+            ? new Date(lastByStation.get(st.id)!.at).getTime()
+            : 0,
+          st.updatedAt ? new Date(st.updatedAt as any).getTime() : 0,
+        ),
+      }))
+      .sort((a, b) => b._sortKey - a._sortKey)
+      .slice(0, 3);
+  }, [stations, completedSessions]);
 
   // Featured community stations — mini preview for HomePage card.
   const { data: featuredLib } = useFeaturedLibrary();
@@ -305,6 +356,67 @@ export default function HomePage() {
         <motion.div variants={item}>
           <DraftsList />
         </motion.div>
+
+        {/* Your stations — top-3 personal stations, most-recent first. The
+            user shouldn't need to leave the home page to see their own work. */}
+        {yourStations.length > 0 && (
+          <motion.div variants={item} className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-h2 text-foreground">
+                <BookOpen className="h-4 w-4 text-primary" />
+                Your stations
+              </h2>
+              <button
+                onClick={() => navigate("/my-stations")}
+                className="inline-flex items-center gap-0.5 text-caption font-medium text-primary hover:underline"
+              >
+                See all
+                <ChevronRight className="h-3 w-3" />
+              </button>
+            </div>
+            <div className="space-y-2 lg:grid lg:grid-cols-3 lg:gap-3 lg:space-y-0">
+              {yourStations.map((st) => (
+                <button
+                  key={st.id}
+                  onClick={() => navigate(`/station/${st.id}`)}
+                  className="flex w-full items-center gap-3 rounded-2xl border border-border/60 bg-card p-4 text-left shadow-card transition-smooth active:scale-[0.98] hover:border-border"
+                >
+                  <div
+                    className={cn(
+                      "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg tabular-nums",
+                      st.lastScore != null
+                        ? scoreRampClasses(st.lastScore)
+                        : "bg-primary/10 text-primary",
+                    )}
+                  >
+                    {st.lastScore != null ? (
+                      <span className="text-caption font-semibold">
+                        {Math.round(st.lastScore)}%
+                      </span>
+                    ) : (
+                      <BookOpen className="h-4 w-4" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-h3 text-foreground">
+                      {st.title}
+                    </p>
+                    <p className="flex items-center gap-1.5 text-caption text-muted-foreground">
+                      <span>{stationTypeLabel(st.type)}</span>
+                      <span aria-hidden>·</span>
+                      <span>
+                        {st.lastPracticedAt
+                          ? relativeTime(st.lastPracticedAt)
+                          : "Not practiced yet"}
+                      </span>
+                    </p>
+                  </div>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
 
         {/* Worth revisiting + Community — side-by-side at lg+ */}
         <div className="space-y-8 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-6">
