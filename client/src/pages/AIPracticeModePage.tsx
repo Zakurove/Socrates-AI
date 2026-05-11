@@ -334,6 +334,28 @@ export default function AIPracticeModePage() {
 
     const sessionMode = mode === "listen" ? "ai_observer" : "ai_history";
 
+    // If the station has no checklist items, AI Listen mode has nothing to
+    // grade — skip the narration phase and head straight to examiner Qs
+    // (or end the session if there aren't any). Same for Conversation mode
+    // when there's no patient briefing — but that's already filtered out
+    // by the practice-mode chooser.
+    const hasChecklistContent =
+      (station.sections ?? []).some((sec) =>
+        (sec.items ?? []).some(
+          (it: any) =>
+            (it.text ?? "").trim() ||
+            (it.subItems ?? []).some(
+              (sub: any) =>
+                (sub.text ?? "").trim() ||
+                (sub.subItems ?? []).some(
+                  (ssub: any) => (ssub.text ?? "").trim(),
+                ),
+            ),
+        ),
+      );
+    const skipNarration =
+      mode === "listen" && !hasChecklistContent && hasExaminerQuestions;
+
     try {
       const session = await createSession.mutateAsync({
         stationId: station.id,
@@ -349,7 +371,19 @@ export default function AIPracticeModePage() {
       setSessionId(session.id);
       sessionIdRef.current = session.id;
 
-      // Start AI
+      // Start AI — unless we're skipping narration for an examiner-only
+      // station, in which case we go straight to the examiner phase.
+      if (skipNarration) {
+        // Dispatch BEGIN so handleTransitionToExaminer's phase guard
+        // accepts the call, then transition immediately. The listening
+        // UI never renders.
+        dispatch({ type: "BEGIN" });
+        // Defer to the next microtask so dispatch's state commit lands
+        // before we read phase in handleTransitionToExaminer.
+        setTimeout(() => handleTransitionToExaminer(), 0);
+        return;
+      }
+
       if (mode === "listen") {
         await narration.start(session.id);
       } else {
@@ -372,7 +406,8 @@ export default function AIPracticeModePage() {
         });
       }
     }
-  }, [station, mode, createSession, narration, gemini, toast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [station, mode, createSession, narration, gemini, toast, hasExaminerQuestions]);
 
   // ---------------------------------------------------------------------------
   // Trigger detected in narration mode -> auto-transition
