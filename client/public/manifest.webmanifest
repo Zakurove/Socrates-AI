@@ -1,7 +1,7 @@
 {
   "name": "Socrates AI",
   "short_name": "Socrates",
-  "description": "OSCE practice partner for medical students and residents.",
+  "description": "OSCE practice partner for medical learners.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
