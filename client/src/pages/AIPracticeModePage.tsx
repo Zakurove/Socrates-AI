@@ -195,6 +195,12 @@ export default function AIPracticeModePage() {
   examinerTapAnswersRef.current = examinerTapAnswers;
   const [examinerTtsMuted, setExaminerTtsMuted] = useState(false);
 
+  // Browsers (especially Safari) only allow audio.play() within a fresh user
+  // gesture. We mint a singleton <audio> on the Begin tap, play a silent
+  // payload to "unlock" it, then reuse the same element for every TTS clip
+  // during the session — that way TTS works without an extra tap.
+  const examinerAudioElRef = useRef<HTMLAudioElement | null>(null);
+
   // Stable updater fns so the child's effect deps don't re-fire each parent tick.
   const updateExaminerCoverage = useCallback(
     (updater: (prev: Map<number, CoverageEntry>) => Map<number, CoverageEntry>) => {
@@ -448,6 +454,23 @@ export default function AIPracticeModePage() {
 
   const handleBegin = useCallback(async () => {
     if (!station) return;
+
+    // CRITICAL: must be synchronous before the first await. Mints the
+    // shared examiner-TTS audio element and primes it with a silent
+    // payload within this user-gesture stack. Subsequent .src = / .play()
+    // calls on the same element work without needing a fresh gesture.
+    if (mode === "listen" && !examinerAudioElRef.current) {
+      const el = new Audio();
+      el.preload = "auto";
+      // 44-byte empty WAV. Just needs to count as a "played" element.
+      el.src =
+        "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+      el.volume = 0;
+      // Fire-and-forget. Even if the silent payload throws, the element is
+      // now bound to this gesture for many browsers.
+      void el.play().catch(() => {});
+      examinerAudioElRef.current = el;
+    }
 
     const sessionMode = mode === "listen" ? "ai_observer" : "ai_history";
 
@@ -1717,6 +1740,7 @@ export default function AIPracticeModePage() {
         <ExaminerNarrationPhase
           sessionId={sessionId}
           questions={examinerNarrationQuestions}
+          audioElRef={examinerAudioElRef}
           narration={{
             transcript: narration.transcript,
             isListening: narration.isListening,

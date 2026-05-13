@@ -80,11 +80,9 @@ export function PracticeModeSheet({
     [stationType, hasPatientBriefing]
   );
 
-  const isQA = stationType === "qa";
   const handleSelect = useCallback(
     (mode: PracticeMode) => {
       if (mode === "ai-conversation" && !hasPatientBriefing) return;
-      if (mode === "ai-listen" && isQA) return;
 
       onOpenChange(false);
 
@@ -120,8 +118,7 @@ export function PracticeModeSheet({
         <div className="flex flex-col gap-3 px-6 pt-4 pb-6">
           {modes.map(({ key, icon: Icon, title, description }) => {
             const isDisabled =
-              (key === "ai-conversation" && !hasPatientBriefing) ||
-              (key === "ai-listen" && isQA);
+              key === "ai-conversation" && !hasPatientBriefing;
             const isDefault = key === smartDefault && !isDisabled;
 
             return (

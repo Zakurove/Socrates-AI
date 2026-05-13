@@ -41,6 +41,7 @@ const AUTO_ADVANCE_DELAY_MS = 600;
 export function ExaminerNarrationPhase({
   sessionId,
   questions,
+  audioElRef,
   narration,
   totalSeconds,
   elapsedSeconds,
@@ -59,6 +60,9 @@ export function ExaminerNarrationPhase({
 }: {
   sessionId: number | null;
   questions: ExaminerQuestion[];
+  // Pre-warmed audio element minted in the Begin tap so .play() works
+  // without an extra user gesture in this phase.
+  audioElRef: React.MutableRefObject<HTMLAudioElement | null>;
   narration: {
     transcript: string;
     isListening: boolean;
@@ -88,18 +92,11 @@ export function ExaminerNarrationPhase({
   const [focusIdx, setFocusIdx] = useState(0);
   const focusedQuestion = questions[focusIdx];
 
-  // Browsers block audio.play() unless invoked synchronously from a fresh
-  // user gesture. The "Begin" tap on the chooser page is too stale by the
-  // time this component mounts (2s transition + fetch). Gate the first
-  // question on an explicit tap so the audio context unlocks; subsequent
-  // questions can autoplay after that.
-  const [started, setStarted] = useState(false);
-
   // Karaoke reveal: word count revealed for the focused question
   const [revealedWords, setRevealedWords] = useState(0);
   const [isTtsPlaying, setIsTtsPlaying] = useState(false);
+  const [ttsBlocked, setTtsBlocked] = useState(false);
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioObjectUrlRef = useRef<string | null>(null);
   const karaokeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const ttsAbortRef = useRef<AbortController | null>(null);
@@ -109,13 +106,13 @@ export function ExaminerNarrationPhase({
       clearInterval(karaokeTimerRef.current);
       karaokeTimerRef.current = null;
     }
-    if (audioRef.current) {
+    const el = audioElRef.current;
+    if (el) {
       try {
-        audioRef.current.pause();
+        el.pause();
       } catch {
         // ignore
       }
-      audioRef.current = null;
     }
     if (audioObjectUrlRef.current) {
       URL.revokeObjectURL(audioObjectUrlRef.current);
@@ -126,7 +123,7 @@ export function ExaminerNarrationPhase({
       ttsAbortRef.current = null;
     }
     setIsTtsPlaying(false);
-  }, []);
+  }, [audioElRef]);
 
   const playTtsForQuestion = useCallback(
     async (q: ExaminerQuestion) => {
@@ -134,6 +131,18 @@ export function ExaminerNarrationPhase({
       const wordCount = q.question.trim().split(/\s+/).filter(Boolean).length;
       if (!sessionId || ttsMuted) {
         setRevealedWords(wordCount);
+        return;
+      }
+      // We can't recover the audio element if the prewarm tap didn't happen.
+      // In that case fall back to full-reveal-without-audio.
+      if (!audioElRef.current) {
+        setRevealedWords(wordCount);
+        if (import.meta.env.DEV) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            "[ExaminerNarrationPhase] no prewarmed audio element — TTS skipped",
+          );
+        }
         return;
       }
       setRevealedWords(0);
@@ -147,13 +156,29 @@ export function ExaminerNarrationPhase({
           body: JSON.stringify({ text: q.question }),
           signal: controller.signal,
         });
-        if (!res.ok) throw new Error(`tts_${res.status}`);
+        if (!res.ok) {
+          if (import.meta.env.DEV) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              "[ExaminerNarrationPhase] tts endpoint failed",
+              res.status,
+            );
+          }
+          throw new Error(`tts_${res.status}`);
+        }
         const blob = await res.blob();
         if (controller.signal.aborted) return;
         const url = URL.createObjectURL(blob);
         audioObjectUrlRef.current = url;
-        const audio = new Audio(url);
-        audioRef.current = audio;
+        const audio = audioElRef.current;
+        // Reuse the prewarmed element so we keep the unlocked gesture token.
+        audio.volume = 1;
+        audio.src = url;
+        try {
+          audio.currentTime = 0;
+        } catch {
+          // some browsers throw before the resource loads
+        }
         const beginKaraoke = () => {
           const dur =
             isFinite(audio.duration) && audio.duration > 0
@@ -172,36 +197,49 @@ export function ExaminerNarrationPhase({
             }
           }, intervalMs);
         };
-        audio.addEventListener("canplaythrough", beginKaraoke, { once: true });
-        audio.addEventListener("ended", () => {
+        const onEnded = () => {
           setRevealedWords(wordCount);
           setIsTtsPlaying(false);
-        });
+          audio.removeEventListener("canplaythrough", beginKaraoke);
+          audio.removeEventListener("ended", onEnded);
+        };
+        audio.addEventListener("canplaythrough", beginKaraoke, { once: true });
+        audio.addEventListener("ended", onEnded);
         try {
           await audio.play();
-        } catch {
+          setTtsBlocked(false);
+        } catch (playErr) {
+          // Autoplay was blocked even though we tried to prewarm. Surface
+          // a "Tap to hear" affordance so the user can retry in-gesture.
+          if (import.meta.env.DEV) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              "[ExaminerNarrationPhase] audio.play() blocked",
+              playErr,
+            );
+          }
           setRevealedWords(wordCount);
           setIsTtsPlaying(false);
+          setTtsBlocked(true);
         }
       } catch {
         setRevealedWords(wordCount);
         setIsTtsPlaying(false);
       }
     },
-    [cleanupAudio, sessionId, ttsMuted],
+    [cleanupAudio, sessionId, ttsMuted, audioElRef],
   );
 
-  // Play TTS whenever focus changes — but only after the user has
-  // unlocked audio via the initial "Begin examiner" tap.
+  // Play TTS whenever focus changes. The audio element was prewarmed in
+  // the parent's Begin tap so this play() succeeds without an extra tap.
   useEffect(() => {
     if (!focusedQuestion) return;
-    if (!started) return;
     void playTtsForQuestion(focusedQuestion);
     return () => {
       cleanupAudio();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusedQuestion?.id, started]);
+  }, [focusedQuestion?.id]);
 
   useEffect(() => {
     return () => cleanupAudio();
@@ -472,23 +510,7 @@ export function ExaminerNarrationPhase({
           </span>
         </div>
 
-        {!started && (
-          <div className="flex flex-col items-start gap-4">
-            <p className="text-body text-muted-foreground max-w-prose">
-              When you're ready, tap to begin. The examiner will read each
-              question aloud — answer when they finish.
-            </p>
-            <Button
-              variant="default"
-              onClick={() => setStarted(true)}
-              className="h-12 rounded-full px-8 text-[17px] font-semibold"
-            >
-              Begin examiner
-            </Button>
-          </div>
-        )}
-
-        {started && focusedQuestion.imageUrl && (
+        {focusedQuestion.imageUrl && (
           <img
             src={focusedQuestion.imageUrl}
             alt=""
@@ -496,33 +518,43 @@ export function ExaminerNarrationPhase({
           />
         )}
 
-        {started && (
-          <p
-            className="text-h2 font-display leading-tight text-foreground"
-            aria-live="polite"
-            aria-atomic="true"
+        <p
+          className="text-h2 font-display leading-tight text-foreground"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {words.map((w, i) => (
+            <span
+              key={i}
+              className={cn(
+                "transition-opacity duration-200",
+                i < revealedWords ? "opacity-100" : "opacity-30",
+              )}
+            >
+              {w}
+              {i < words.length - 1 ? " " : ""}
+            </span>
+          ))}
+          {showCursor && (
+            <span className="ml-1 inline-block h-5 w-1.5 animate-pulse rounded-sm bg-brand-accent align-middle" />
+          )}
+        </p>
+
+        {/* Fallback when the browser blocked audio anyway — surfaces a
+            tap-to-hear button so the user can retry in-gesture. */}
+        {ttsBlocked && !ttsMuted && (
+          <button
+            type="button"
+            onClick={() => void playTtsForQuestion(focusedQuestion)}
+            className="mt-3 inline-flex items-center gap-1.5 self-start rounded-full bg-muted px-3 py-1.5 text-caption font-medium text-foreground transition-colors hover:bg-muted/80"
           >
-            {words.map((w, i) => (
-              <span
-                key={i}
-                className={cn(
-                  "transition-opacity duration-200",
-                  i < revealedWords ? "opacity-100" : "opacity-30",
-                )}
-              >
-                {w}
-                {i < words.length - 1 ? " " : ""}
-              </span>
-            ))}
-            {showCursor && (
-              <span className="ml-1 inline-block h-5 w-1.5 animate-pulse rounded-sm bg-brand-accent align-middle" />
-            )}
-          </p>
+            <Volume className="h-3.5 w-3.5" />
+            Tap to hear the question
+          </button>
         )}
 
         {/* MCQ / multi-select tap area — no grading reveal until results */}
-        {started &&
-          focusedQuestion.questionType === "multiple_choice" &&
+        {focusedQuestion.questionType === "multiple_choice" &&
           (() => {
             const options: { text: string; isCorrect: boolean }[] =
               focusedQuestion.config?.options ?? [];
@@ -557,8 +589,7 @@ export function ExaminerNarrationPhase({
             );
           })()}
 
-        {started &&
-          focusedQuestion.questionType === "multi_select" &&
+        {focusedQuestion.questionType === "multi_select" &&
           (() => {
             const options: { text: string; isCorrect: boolean }[] =
               focusedQuestion.config?.options ?? [];
@@ -611,8 +642,7 @@ export function ExaminerNarrationPhase({
           })()}
 
         {/* Skip — escape hatch when STT undershoots on free_text / checklist */}
-        {started &&
-          focusIdx < questions.length - 1 &&
+        {focusIdx < questions.length - 1 &&
           (focusedQuestion.questionType === "free_text" ||
             focusedQuestion.questionType === "checklist") && (
             <button
