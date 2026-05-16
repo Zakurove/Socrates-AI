@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Square, Volume2, VolumeX, Volume, Pause } from "lucide-react";
+import { Square, Volume2, VolumeX, Volume, Pause, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SessionTimerRing } from "@/components/SessionTimerRing";
 import { MicButton } from "@/components/practice/MicButton";
@@ -37,6 +37,9 @@ export type TapAnswer = {
 const LIVE_CHECK_INTERVAL_MS = 10_000;
 const LIVE_CHECK_TRANSCRIPT_DELTA = 15; // chars added since last grading
 const AUTO_ADVANCE_DELAY_MS = 600;
+const FREE_TEXT_COMPLETE_THRESHOLD = 0.7;
+const CHECKLIST_COMPLETE_RATIO = 0.6; // 60% of keypoints covered = advance
+const IDLE_ADVANCE_AFTER_MS = 25_000; // no transcript growth → consider done
 
 export function ExaminerNarrationPhase({
   sessionId,
@@ -389,24 +392,39 @@ export function ExaminerNarrationPhase({
     void postCheckRef.current();
   }, [narration.transcript, narration.isTranscribing]);
 
+  // Coverage stats for a checklist Q — used both for the auto-advance gate
+  // and the on-card progress signal.
+  const checklistCoverage = useCallback(
+    (q: ExaminerQuestion): { covered: number; total: number } => {
+      const c = coverage.get(q.id);
+      const kp = q.keyPoints ?? [];
+      if (kp.length === 0 || !c?.pointResults)
+        return { covered: 0, total: kp.length };
+      const presentSet = new Set(
+        c.pointResults
+          .filter((p) => p.status === "present")
+          .map((p) => p.point),
+      );
+      const covered = kp.filter((p) => presentSet.has(p)).length;
+      return { covered, total: kp.length };
+    },
+    [coverage],
+  );
+
   // ─── Completion threshold + auto-advance ───────────────────────────────
+  // Voice + Whisper imprecision means demanding 100% checklist coverage is
+  // unreachable. 60% is a reasonable "answered enough to move on" bar; the
+  // results page still grades on true coverage.
   const isQuestionComplete = useCallback(
     (q: ExaminerQuestion): boolean => {
       if (q.questionType === "free_text") {
         const c = coverage.get(q.id);
-        return !!c && c.score >= 0.7;
+        return !!c && c.score >= FREE_TEXT_COMPLETE_THRESHOLD;
       }
       if (q.questionType === "checklist") {
-        const c = coverage.get(q.id);
-        const kp = q.keyPoints ?? [];
-        if (kp.length === 0) return false;
-        if (!c?.pointResults) return false;
-        const presentSet = new Set(
-          c.pointResults
-            .filter((p) => p.status === "present")
-            .map((p) => p.point),
-        );
-        return kp.every((p) => presentSet.has(p));
+        const { covered, total } = checklistCoverage(q);
+        if (total === 0) return false;
+        return covered / total >= CHECKLIST_COMPLETE_RATIO;
       }
       if (
         q.questionType === "multiple_choice" ||
@@ -416,7 +434,7 @@ export function ExaminerNarrationPhase({
       }
       return false;
     },
-    [coverage, tapAnswers],
+    [coverage, tapAnswers, checklistCoverage],
   );
 
   const autoAdvancedFromRef = useRef<Set<number>>(new Set());
@@ -426,6 +444,58 @@ export function ExaminerNarrationPhase({
   useEffect(() => {
     autoAdvancedFromRef.current = new Set();
   }, [questions]);
+
+  // Idle-advance fallback: if the user has spoken something for the
+  // focused question but the transcript hasn't grown for IDLE_ADVANCE_AFTER_MS,
+  // assume they're done (or stuck) and advance. Catches unreachable-checklist
+  // gates and "I think I'm done" UX cases.
+  const focusBaselineLenRef = useRef(0);
+  const lastGrowthAtRef = useRef(Date.now());
+  useEffect(() => {
+    // Reset growth tracking on each focus change.
+    focusBaselineLenRef.current = narration.transcript.length;
+    lastGrowthAtRef.current = Date.now();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusedQuestion?.id]);
+  useEffect(() => {
+    if (narration.transcript.length > focusBaselineLenRef.current) {
+      lastGrowthAtRef.current = Date.now();
+    }
+  }, [narration.transcript]);
+  useEffect(() => {
+    if (!focusedQuestion) return;
+    // Only idle-advance for spoken question types.
+    if (
+      focusedQuestion.questionType !== "free_text" &&
+      focusedQuestion.questionType !== "checklist"
+    )
+      return;
+    const interval = setInterval(() => {
+      if (!focusedQuestion) return;
+      if (autoAdvancedFromRef.current.has(focusedQuestion.id)) return;
+      const grewSinceFocus =
+        narration.transcript.length > focusBaselineLenRef.current + 20;
+      if (!grewSinceFocus) return;
+      const idleMs = Date.now() - lastGrowthAtRef.current;
+      if (idleMs < IDLE_ADVANCE_AFTER_MS) return;
+      const nextIdx = questions.findIndex(
+        (q, i) => i > focusIdx && !isQuestionComplete(q),
+      );
+      if (nextIdx < 0) return;
+      autoAdvancedFromRef.current.add(focusedQuestion.id);
+      if (import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.log("[ExaminerNarrationPhase] idle auto-advance fired", {
+          from: focusedQuestion.id,
+          toIdx: nextIdx,
+          idleMs,
+        });
+      }
+      setFocusIdx(nextIdx);
+    }, 2000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusedQuestion?.id, focusedQuestion?.questionType]);
 
   useEffect(() => {
     if (!focusedQuestion) return;
@@ -634,6 +704,23 @@ export function ExaminerNarrationPhase({
           </button>
         )}
 
+        {/* Coverage progress signal for checklist Qs — count only, no
+            keypoint text exposed. Tells the user they're making progress
+            (or aren't yet) without revealing the rubric. */}
+        {focusedQuestion.questionType === "checklist" &&
+          (focusedQuestion.keyPoints?.length ?? 0) > 0 &&
+          (() => {
+            const { covered, total } = checklistCoverage(focusedQuestion);
+            return (
+              <p className="mt-4 text-caption text-muted-foreground">
+                <span className="tabular-nums font-medium text-foreground">
+                  {covered}
+                </span>{" "}
+                of {total} points covered
+              </p>
+            );
+          })()}
+
         {/* MCQ / multi-select tap area — no grading reveal until results */}
         {focusedQuestion.questionType === "multiple_choice" &&
           (() => {
@@ -726,13 +813,15 @@ export function ExaminerNarrationPhase({
         {focusIdx < questions.length - 1 &&
           (focusedQuestion.questionType === "free_text" ||
             focusedQuestion.questionType === "checklist") && (
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="sm"
               onClick={goNext}
-              className="mt-6 self-start text-caption text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+              className="mt-6 self-start gap-1.5 rounded-full"
             >
-              Skip to next question →
-            </button>
+              Next question
+              <ChevronRight className="h-4 w-4" />
+            </Button>
           )}
       </div>
 

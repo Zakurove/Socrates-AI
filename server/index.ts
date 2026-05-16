@@ -62,6 +62,11 @@ app.use(
               "https://www.youtube-nocookie.com",
               "https://player.vimeo.com",
             ],
+            // Allow blob: (URL.createObjectURL for OpenAI TTS audio) and
+            // data: (the silent-MP3 prewarm that unlocks the iOS audio
+            // element). Without this, helmet's default `media-src 'self'`
+            // blocks the examiner-phase TTS at the resource-load layer.
+            "media-src": ["'self'", "blob:", "data:"],
           },
         },
     // YouTube returns "Error 153 — player configuration error" when the
