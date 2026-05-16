@@ -35,7 +35,7 @@ export type TapAnswer = {
 };
 
 const LIVE_CHECK_INTERVAL_MS = 10_000;
-const LIVE_CHECK_TRANSCRIPT_DELTA = 30; // chars added since last grading
+const LIVE_CHECK_TRANSCRIPT_DELTA = 15; // chars added since last grading
 const AUTO_ADVANCE_DELAY_MS = 600;
 
 export function ExaminerNarrationPhase({
@@ -125,24 +125,85 @@ export function ExaminerNarrationPhase({
     setIsTtsPlaying(false);
   }, [audioElRef]);
 
-  const playTtsForQuestion = useCallback(
+  // Stash for the prefetched blob URL of the focused question, so the
+  // "Tap to hear" pill can play() SYNCHRONOUSLY inside its click handler —
+  // no await between the user gesture and audio.play(). Without this the
+  // pill click loses its gesture activation while await fetch runs.
+  const pendingTtsUrlRef = useRef<string | null>(null);
+  const pendingWordCountRef = useRef<number>(0);
+
+  // Wire karaoke timer + autoplay attempt for whatever URL is currently in
+  // pendingTtsUrlRef. Separated so the synchronous click path can invoke
+  // it without any awaits.
+  const armAudioForCurrentBlob = useCallback(() => {
+    const audio = audioElRef.current;
+    const url = pendingTtsUrlRef.current;
+    if (!audio || !url) return false;
+    const wordCount = pendingWordCountRef.current;
+    audio.muted = false;
+    audio.volume = 1;
+    audio.src = url;
+    try {
+      audio.currentTime = 0;
+    } catch {
+      // some browsers throw before the resource loads
+    }
+    const beginKaraoke = () => {
+      const dur =
+        isFinite(audio.duration) && audio.duration > 0
+          ? audio.duration
+          : wordCount * 0.35;
+      const intervalMs = Math.max(80, (dur * 1000) / Math.max(1, wordCount));
+      let revealed = 0;
+      if (karaokeTimerRef.current) clearInterval(karaokeTimerRef.current);
+      setIsTtsPlaying(true);
+      karaokeTimerRef.current = setInterval(() => {
+        revealed += 1;
+        setRevealedWords(revealed);
+        if (revealed >= wordCount && karaokeTimerRef.current) {
+          clearInterval(karaokeTimerRef.current);
+          karaokeTimerRef.current = null;
+        }
+      }, intervalMs);
+    };
+    const onEnded = () => {
+      setRevealedWords(wordCount);
+      setIsTtsPlaying(false);
+      audio.removeEventListener("canplaythrough", beginKaraoke);
+      audio.removeEventListener("ended", onEnded);
+    };
+    audio.addEventListener("canplaythrough", beginKaraoke, { once: true });
+    audio.addEventListener("ended", onEnded);
+    // CRITICAL: do NOT await — the caller may be a click handler whose
+    // gesture-activation will expire if we yield to the microtask queue.
+    const playPromise = audio.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise
+        .then(() => setTtsBlocked(false))
+        .catch((err) => {
+          if (import.meta.env.DEV) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              "[ExaminerNarrationPhase] audio.play() blocked",
+              err,
+            );
+          }
+          setIsTtsPlaying(false);
+          setTtsBlocked(true);
+        });
+    }
+    return true;
+  }, [audioElRef]);
+
+  // Prefetch (or refetch) TTS for the focused question and stash the blob
+  // URL. Then attempt a non-awaited play; if blocked, the pill surfaces.
+  const prefetchAndPlay = useCallback(
     async (q: ExaminerQuestion) => {
       cleanupAudio();
       const wordCount = q.question.trim().split(/\s+/).filter(Boolean).length;
+      pendingWordCountRef.current = wordCount;
       if (!sessionId || ttsMuted) {
         setRevealedWords(wordCount);
-        return;
-      }
-      // We can't recover the audio element if the prewarm tap didn't happen.
-      // In that case fall back to full-reveal-without-audio.
-      if (!audioElRef.current) {
-        setRevealedWords(wordCount);
-        if (import.meta.env.DEV) {
-          // eslint-disable-next-line no-console
-          console.warn(
-            "[ExaminerNarrationPhase] no prewarmed audio element — TTS skipped",
-          );
-        }
         return;
       }
       setRevealedWords(0);
@@ -169,72 +230,46 @@ export function ExaminerNarrationPhase({
         const blob = await res.blob();
         if (controller.signal.aborted) return;
         const url = URL.createObjectURL(blob);
+        // Replace previous pending URL (revoke happens in cleanupAudio).
+        pendingTtsUrlRef.current = url;
         audioObjectUrlRef.current = url;
-        const audio = audioElRef.current;
-        // Reuse the prewarmed element so we keep the unlocked gesture token.
-        audio.volume = 1;
-        audio.src = url;
-        try {
-          audio.currentTime = 0;
-        } catch {
-          // some browsers throw before the resource loads
-        }
-        const beginKaraoke = () => {
-          const dur =
-            isFinite(audio.duration) && audio.duration > 0
-              ? audio.duration
-              : wordCount * 0.35;
-          const intervalMs = Math.max(80, (dur * 1000) / Math.max(1, wordCount));
-          let revealed = 0;
-          if (karaokeTimerRef.current) clearInterval(karaokeTimerRef.current);
-          setIsTtsPlaying(true);
-          karaokeTimerRef.current = setInterval(() => {
-            revealed += 1;
-            setRevealedWords(revealed);
-            if (revealed >= wordCount && karaokeTimerRef.current) {
-              clearInterval(karaokeTimerRef.current);
-              karaokeTimerRef.current = null;
-            }
-          }, intervalMs);
-        };
-        const onEnded = () => {
+        if (!audioElRef.current) {
           setRevealedWords(wordCount);
-          setIsTtsPlaying(false);
-          audio.removeEventListener("canplaythrough", beginKaraoke);
-          audio.removeEventListener("ended", onEnded);
-        };
-        audio.addEventListener("canplaythrough", beginKaraoke, { once: true });
-        audio.addEventListener("ended", onEnded);
-        try {
-          await audio.play();
-          setTtsBlocked(false);
-        } catch (playErr) {
-          // Autoplay was blocked even though we tried to prewarm. Surface
-          // a "Tap to hear" affordance so the user can retry in-gesture.
           if (import.meta.env.DEV) {
             // eslint-disable-next-line no-console
             console.warn(
-              "[ExaminerNarrationPhase] audio.play() blocked",
-              playErr,
+              "[ExaminerNarrationPhase] no prewarmed audio element — pill must be tapped to hear",
             );
           }
-          setRevealedWords(wordCount);
-          setIsTtsPlaying(false);
           setTtsBlocked(true);
+          return;
         }
+        // Try autoplay (will succeed only if the audio element is still
+        // gesture-unlocked from the parent's Begin tap). If it rejects,
+        // armAudioForCurrentBlob sets ttsBlocked so the pill surfaces.
+        armAudioForCurrentBlob();
       } catch {
         setRevealedWords(wordCount);
         setIsTtsPlaying(false);
       }
     },
-    [cleanupAudio, sessionId, ttsMuted, audioElRef],
+    [cleanupAudio, sessionId, ttsMuted, audioElRef, armAudioForCurrentBlob],
   );
 
-  // Play TTS whenever focus changes. The audio element was prewarmed in
-  // the parent's Begin tap so this play() succeeds without an extra tap.
+  // The pill click handler. SYNCHRONOUS — no awaits. Replays whatever
+  // blob is currently stashed so play() inherits this click's gesture.
+  const playStashedSync = useCallback(() => {
+    if (!pendingTtsUrlRef.current) return;
+    // Reset reveal so the karaoke runs again from word 0.
+    setRevealedWords(0);
+    setTtsBlocked(false);
+    armAudioForCurrentBlob();
+  }, [armAudioForCurrentBlob]);
+
+  // Fetch TTS for the focused question on every focus change.
   useEffect(() => {
     if (!focusedQuestion) return;
-    void playTtsForQuestion(focusedQuestion);
+    void prefetchAndPlay(focusedQuestion);
     return () => {
       cleanupAudio();
     };
@@ -288,6 +323,14 @@ export function ExaminerNarrationPhase({
         }>;
       };
       const items = body.items ?? [];
+      if (import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.log("[ExaminerNarrationPhase] postCheck items", {
+          transcriptLen: transcript.length,
+          itemCount: items.length,
+          scores: items.map((it) => ({ id: it.questionId, s: it.score })),
+        });
+      }
       if (items.length === 0) return;
       setCoverage((prev) => {
         const next = new Map(prev);
@@ -307,23 +350,44 @@ export function ExaminerNarrationPhase({
     }
   }, [gradableQuestions, sessionId, setCoverage]);
 
+  // CRITICAL: the 10s interval must NOT have `postCheck` in deps. postCheck
+  // is rebuilt whenever `gradableQuestions` changes, and gradableQuestions
+  // is recreated when the parent re-renders (which it does every second
+  // for the timer tick). With postCheck in deps the interval gets torn
+  // down and re-armed every render, and never reaches 10s of wall-time.
+  // Use a ref to call the latest postCheck without retriggering the effect.
+  const postCheckRef = useRef(postCheck);
+  postCheckRef.current = postCheck;
   useEffect(() => {
-    void postCheck();
-    const id = setInterval(() => void postCheck(), LIVE_CHECK_INTERVAL_MS);
+    if (!sessionId) return;
+    void postCheckRef.current();
+    const id = setInterval(() => void postCheckRef.current(), LIVE_CHECK_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [postCheck]);
+  }, [sessionId]);
 
-  // Eager check: after each Whisper chunk lands, grade as soon as the
-  // transcript has grown meaningfully. Keeps auto-advance snappy without
-  // waiting for the next 10s tick.
+  // Fire on every transcribing→idle edge. Each completed Whisper chunk is
+  // worth grading; we don't gate on a chars delta so the very first short
+  // chunk (e.g. ~50 chars from a 5-second answer) still triggers grading.
+  const prevTranscribingRef = useRef(false);
+  useEffect(() => {
+    const was = prevTranscribingRef.current;
+    prevTranscribingRef.current = narration.isTranscribing;
+    if (was && !narration.isTranscribing) {
+      void postCheckRef.current();
+    }
+  }, [narration.isTranscribing]);
+
+  // Belt-and-suspenders: also fire when transcript has grown by ≥15 chars
+  // since the last check. Catches cases where isTranscribing toggles
+  // weren't observed (rapid back-to-back chunks).
   const lastCheckedLenRef = useRef(0);
   useEffect(() => {
     if (narration.isTranscribing) return;
     const len = narration.transcript.length;
     if (len - lastCheckedLenRef.current < LIVE_CHECK_TRANSCRIPT_DELTA) return;
     lastCheckedLenRef.current = len;
-    void postCheck();
-  }, [narration.transcript, narration.isTranscribing, postCheck]);
+    void postCheckRef.current();
+  }, [narration.transcript, narration.isTranscribing]);
 
   // ─── Completion threshold + auto-advance ───────────────────────────────
   const isQuestionComplete = useCallback(
@@ -356,6 +420,13 @@ export function ExaminerNarrationPhase({
   );
 
   const autoAdvancedFromRef = useRef<Set<number>>(new Set());
+  // Reset the "already advanced from" set whenever the questions list
+  // identity changes (different station / fresh session). Prevents a
+  // ref polluted by stale question ids from blocking new advances.
+  useEffect(() => {
+    autoAdvancedFromRef.current = new Set();
+  }, [questions]);
+
   useEffect(() => {
     if (!focusedQuestion) return;
     if (!isQuestionComplete(focusedQuestion)) return;
@@ -364,6 +435,14 @@ export function ExaminerNarrationPhase({
       (q, i) => i > focusIdx && !isQuestionComplete(q),
     );
     autoAdvancedFromRef.current.add(focusedQuestion.id);
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line no-console
+      console.log("[ExaminerNarrationPhase] auto-advance fired", {
+        from: focusedQuestion.id,
+        toIdx: nextIdx,
+        focusIdx,
+      });
+    }
     if (nextIdx < 0) return; // last question — stay; user taps End when ready.
     const t = setTimeout(() => setFocusIdx(nextIdx), AUTO_ADVANCE_DELAY_MS);
     return () => clearTimeout(t);
@@ -541,11 +620,13 @@ export function ExaminerNarrationPhase({
         </p>
 
         {/* Fallback when the browser blocked audio anyway — surfaces a
-            tap-to-hear button so the user can retry in-gesture. */}
+            tap-to-hear button so the user can retry in-gesture. The
+            handler MUST be synchronous: any await between the click and
+            audio.play() expires the gesture-activation token. */}
         {ttsBlocked && !ttsMuted && (
           <button
             type="button"
-            onClick={() => void playTtsForQuestion(focusedQuestion)}
+            onClick={playStashedSync}
             className="mt-3 inline-flex items-center gap-1.5 self-start rounded-full bg-muted px-3 py-1.5 text-caption font-medium text-foreground transition-colors hover:bg-muted/80"
           >
             <Volume className="h-3.5 w-3.5" />

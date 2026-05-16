@@ -462,14 +462,27 @@ export default function AIPracticeModePage() {
     if (mode === "listen" && !examinerAudioElRef.current) {
       const el = new Audio();
       el.preload = "auto";
-      // 44-byte empty WAV. Just needs to count as a "played" element.
+      // iOS Safari unlocks audio per-element. `muted=true` is the signal
+      // WebKit recognizes as a valid unlock attempt; `volume=0` does NOT
+      // count as muted. A 0.05s silent MP3 (valid frame header) is more
+      // reliable than a zero-length WAV — some WebKit builds reject the
+      // latter.
+      el.muted = true;
+      // Real 0.05s silent MP3 (libmp3lame). NotSupportedError on a
+      // garbage payload would prevent the per-element unlock from
+      // taking effect on iOS Safari.
       el.src =
-        "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
-      el.volume = 0;
-      // Fire-and-forget. Even if the silent payload throws, the element is
-      // now bound to this gesture for many browsers.
-      void el.play().catch(() => {});
+        "data:audio/mpeg;base64,SUQzBAAAAAAAIlRTU0UAAAAOAAADTGF2ZjYyLjMuMTAwAAAAAAAAAAAAAAD/83DAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAACWAB6enp6enp6enp6enp6enp6enp6enp6enqmpqampqampqampqampqampqampqampqam09PT09PT09PT09PT09PT09PT09PT09PT0/////////////////////////////////8AAAAATGF2YzYyLjExAAAAAAAAAAAAAAAAJAJxAAAAAAAAAlj7+mRqAAAAAAAAAAAAAAAAAP/zQMQAAAADSAAAAABMQU1FMy4xMDBVVVVVVVVVVVVVTEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//NCxFsAAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVTEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//NAxKQAAANIAAAAAFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/80LEowAAA0gAAAAAVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVU=";
       examinerAudioElRef.current = el;
+      // Awaiting the prewarm inside the gesture is what cements the
+      // per-element unlock on iOS. Catch+swallow if the silent payload
+      // refuses — the element is still gesture-bound either way.
+      try {
+        await el.play();
+      } catch {
+        // ignore — even a rejected play() typically binds the element
+      }
+      el.muted = false;
     }
 
     const sessionMode = mode === "listen" ? "ai_observer" : "ai_history";
