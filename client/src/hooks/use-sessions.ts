@@ -49,8 +49,12 @@ export type SessionWithDetails = Session & {
       point: string;
       status: "present" | "missed";
     }> | null;
-    question: {
+    // Nullable — historical results can survive the underlying
+    // examiner_questions row being replaced on a station edit (the FK is
+    // SET NULL, not CASCADE). The results page must degrade gracefully.
+    question: null | {
       question: string;
+      description?: string | null;
       idealAnswer: string;
       questionType:
         | "free_text"
@@ -58,6 +62,22 @@ export type SessionWithDetails = Session & {
         | "multi_select"
         | "checklist";
       keyPoints: string[] | null;
+      explanation?: string | null;
+      // Needed for MCQ / multi-select results breakdown — which options
+      // existed and which were correct. May be null for free_text / checklist.
+      config?: {
+        options?: Array<{ text: string; isCorrect: boolean }>;
+        threshold?: number;
+      } | null;
+      imageUrl?: string | null;
+      media?: Array<{
+        type: "image" | "video";
+        url: string;
+        caption?: string | null;
+        order: number;
+        phase: "question" | "explanation";
+        visibility: "exam" | "study" | "both";
+      }>;
     };
   }>;
   /** Server-derived composite scoring (iter10). Always present on reads. */

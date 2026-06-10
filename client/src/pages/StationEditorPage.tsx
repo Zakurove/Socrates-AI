@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
+import { ExaminerMediaPicker } from "@/components/editor/ExaminerMediaPicker";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -80,8 +81,7 @@ import { saveDraft, loadDraft, clearDraft, type DraftData } from "@/lib/editor-d
 // allow empty-string values, so we map "" <-> NO_SPECIALTY at the boundary.
 const NO_SPECIALTY = "__none__";
 import { parseVideoUrl } from "@/lib/video";
-import { ToastAction } from "@/components/ui/toast";
-import type { CreateStationPayload } from "@shared/schema";
+import { STATION_TYPES, type CreateStationPayload } from "@shared/schema";
 
 // ===================== TYPES =====================
 
@@ -146,10 +146,26 @@ type QuestionType =
   | "multi_select"
   | "checklist";
 
+// Per-image visibility: 'exam' (shown during examination), 'study'
+// (only in study/review mode), 'both' (always).
+export type ExaminerMediaVisibility = "exam" | "study" | "both";
+
+export interface ExaminerMediaEntry {
+  type: "image" | "video";
+  url: string;
+  caption?: string | null;
+  order: number;
+  visibility: ExaminerMediaVisibility;
+}
+
 interface EditorQuestion {
   id: string;
   question: string;
+  // Optional setup / context for the question itself.
+  description?: string | null;
   idealAnswer: string | null;
+  // Optional rationale for the answer — shown in study/review mode.
+  explanation?: string | null;
   questionType?: QuestionType;
   options?: { text: string; isCorrect: boolean }[];
   threshold?: number;
@@ -158,6 +174,10 @@ interface EditorQuestion {
   // worth 1 point. Stored with stable ids so DnD reorder is identity-safe;
   // serialized to a plain string[] in keyPoints on save.
   keyPoints?: ChecklistKeyPoint[];
+  // Multi-media for the question prompt (visibility per image).
+  questionMedia?: ExaminerMediaEntry[];
+  // Multi-media for the answer's explanation (defaults to study-only).
+  explanationMedia?: ExaminerMediaEntry[];
 }
 
 function genId() {
@@ -243,10 +263,24 @@ export default function StationEditorPage() {
   const [questionErrors, setQuestionErrors] = useState<Record<string, string>>({});
 
   const titleRef = useRef<HTMLInputElement>(null);
+  const referenceImageWrapperRef = useRef<HTMLDivElement>(null);
+  const sectionsContainerRef = useRef<HTMLDivElement>(null);
   const sectionsRef = useRef<EditorSection[]>([]);
   useEffect(() => {
     sectionsRef.current = sections;
   }, [sections]);
+  // In-app navigation guard: set to true to bypass the dirty-state pushState
+  // intercept for one call (e.g. when WE are navigating after confirm or
+  // after auto-POST success).
+  const allowNavRef = useRef(false);
+  // Tracks the destination path the user tried to navigate to before the
+  // unsaved-changes dialog fired. Null means the back button was pressed
+  // (use the default fallback).
+  const [pendingNavPath, setPendingNavPath] = useState<string | null>(null);
+  // Guards the one-shot early auto-POST (Issue 3) so it only fires once per
+  // mount even if the title is edited multiple times before the mutation
+  // resolves.
+  const autoCreateAttemptedRef = useRef(false);
   const isSaving = createStation.isPending || updateStation.isPending;
 
   // Autosave / dirty tracking
@@ -354,9 +388,53 @@ export default function StationEditorPage() {
       const loadedQuestions: EditorQuestion[] = [...existingStation.examinerQuestions]
         .sort((a, b) => a.order - b.order)
         .map((q: any) => {
+          // Split server-side media into question vs explanation buckets.
+          // Legacy q.imageUrl (no media array) is treated as a question
+          // exam-visible image.
+          const serverMedia: any[] = Array.isArray(q.media) ? q.media : [];
+          const questionMedia: ExaminerMediaEntry[] = serverMedia
+            .filter((m) => (m.phase ?? "question") === "question")
+            .map((m) => ({
+              type: m.type,
+              url: m.url,
+              caption: m.caption ?? null,
+              order: m.order,
+              visibility: (m.visibility ?? "exam") as ExaminerMediaVisibility,
+            }));
+          const explanationMedia: ExaminerMediaEntry[] = serverMedia
+            .filter((m) => m.phase === "explanation")
+            .map((m) => ({
+              type: m.type,
+              url: m.url,
+              caption: m.caption ?? null,
+              order: m.order,
+              visibility: (m.visibility ?? "study") as ExaminerMediaVisibility,
+            }));
+          if (
+            q.imageUrl &&
+            questionMedia.length === 0 &&
+            !serverMedia.some(
+              (m) => m.type === "image" && m.url === q.imageUrl,
+            )
+          ) {
+            questionMedia.push({
+              type: "image",
+              url: q.imageUrl,
+              caption: null,
+              order: 0,
+              visibility: "exam",
+            });
+          }
+          const common = {
+            description: q.description ?? null,
+            explanation: q.explanation ?? null,
+            questionMedia,
+            explanationMedia,
+          };
           const qType: QuestionType = q.questionType ?? "free_text";
           if (qType === "free_text") {
             return {
+              ...common,
               id: genId(),
               question: q.question,
               idealAnswer: q.idealAnswer ?? "",
@@ -369,6 +447,7 @@ export default function StationEditorPage() {
           if (qType === "checklist") {
             const pts = Array.isArray(q.keyPoints) ? q.keyPoints : [];
             return {
+              ...common,
               id: genId(),
               question: q.question,
               idealAnswer: null,
@@ -379,6 +458,7 @@ export default function StationEditorPage() {
           const cfg = q.config ?? {};
           const options = Array.isArray(cfg.options) ? cfg.options : [];
           return {
+            ...common,
             id: genId(),
             question: q.question,
             idealAnswer: null,
@@ -424,8 +504,11 @@ export default function StationEditorPage() {
     referenceImageCaption,
   ]);
 
-  // beforeunload guard when dirty
+  // beforeunload guard for tab close / reload. Only relevant for NEW stations
+  // that haven't been POSTed yet — once a station has a server id, autosave
+  // keeps it persisted within 2s, and the localStorage draft covers the gap.
   useEffect(() => {
+    if (savedStationId !== null) return;
     const handler = (e: BeforeUnloadEvent) => {
       if (dirtyRef.current) {
         e.preventDefault();
@@ -434,7 +517,50 @@ export default function StationEditorPage() {
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, []);
+  }, [savedStationId]);
+
+  // In-app navigation guard. When the user has unsaved edits and another
+  // component triggers a route change (e.g. SideNav button → wouter
+  // `navigate()` → `history.pushState`), intercept the call and show the
+  // unsaved-changes dialog instead. The user can confirm to proceed, which
+  // sets `allowNavRef.current = true` and replays the navigation.
+  useEffect(() => {
+    if (!dirty) return;
+    const origPush = window.history.pushState.bind(window.history);
+    const origReplace = window.history.replaceState.bind(window.history);
+    const wrap =
+      (orig: typeof origPush) =>
+      (...args: Parameters<typeof origPush>) => {
+        if (allowNavRef.current) {
+          allowNavRef.current = false;
+          return orig(...args);
+        }
+        // pushState's third arg is the destination URL (string | null).
+        const target = args[2];
+        const targetStr =
+          typeof target === "string"
+            ? target
+            : target instanceof URL
+              ? target.pathname + target.search + target.hash
+              : null;
+        // Don't intercept hash-only changes or same-URL replaces — those
+        // come from internal libs (Radix focus traps, etc.) not real nav.
+        if (
+          targetStr &&
+          targetStr.split("#")[0] === window.location.pathname + window.location.search
+        ) {
+          return orig(...args);
+        }
+        setPendingNavPath(targetStr);
+        setConfirmLeaveOpen(true);
+      };
+    window.history.pushState = wrap(origPush);
+    window.history.replaceState = wrap(origReplace);
+    return () => {
+      window.history.pushState = origPush;
+      window.history.replaceState = origReplace;
+    };
+  }, [dirty]);
 
   // --- localStorage draft helpers ---
   const draftKey = savedStationId ? String(savedStationId) : isEditing && params.id ? params.id : "new";
@@ -481,29 +607,15 @@ export default function StationEditorPage() {
       // Autosave-during-edit still runs; it will overwrite the "new" draft
       // as the user types. See iter8 item 5.
     } else if (params.id) {
-      // Editing existing station — check if a draft is newer than server data
+      // Editing existing station — silently restore a newer localStorage draft
+      // (the 1.5s keystroke buffer). No toast: the server is the source of
+      // truth now that auto-POST runs on first edit (see DRAFT_STATUS_FEATURE.md).
       const draft = loadDraft(params.id);
       if (draft && existingStation) {
         const serverUpdatedAt = new Date(existingStation.updatedAt).getTime();
         if (draft.savedAt > serverUpdatedAt) {
           restoreDraft(draft);
-          toast({
-            title: "Unsaved changes restored",
-            description: "A local draft newer than the last save was found.",
-            action: (
-              <ToastAction
-                altText="Discard draft"
-                onClick={() => {
-                  clearDraft(params.id!);
-                  window.location.reload();
-                }}
-              >
-                Discard
-              </ToastAction>
-            ),
-          });
         } else {
-          // Server data is newer — discard stale draft
           clearDraft(params.id);
         }
       }
@@ -981,7 +1093,11 @@ export default function StationEditorPage() {
   }, []);
 
   const updateQuestion = useCallback(
-    (qId: string, field: "question" | "idealAnswer", value: string) => {
+    <K extends keyof EditorQuestion>(
+      qId: string,
+      field: K,
+      value: EditorQuestion[K],
+    ) => {
       setQuestions((prev) =>
         prev.map((q) => (q.id === qId ? { ...q, [field]: value } : q))
       );
@@ -1536,9 +1652,37 @@ export default function StationEditorPage() {
         return opts.length >= 2 && opts.some((o) => o.isCorrect) && opts.every((o) => o.text.trim());
       })
       .map((q, qi) => {
+        // Merge question + explanation media into the single payload
+        // shape the server expects, tagging each with its phase. Visibility
+        // comes from the per-entry toggle the editor exposes (defaults to
+        // 'exam' for question media, 'study' for explanation media).
+        const media = [
+          ...(q.questionMedia ?? []).map((m, mi) => ({
+            type: m.type,
+            url: m.url,
+            caption: m.caption ?? null,
+            order: mi,
+            phase: "question" as const,
+            visibility: m.visibility,
+          })),
+          ...(q.explanationMedia ?? []).map((m, mi) => ({
+            type: m.type,
+            url: m.url,
+            caption: m.caption ?? null,
+            order: mi,
+            phase: "explanation" as const,
+            visibility: m.visibility,
+          })),
+        ];
+        const commonExtras = {
+          description: (q.description ?? "").trim() || null,
+          explanation: (q.explanation ?? "").trim() || null,
+          media,
+        };
         const t = q.questionType ?? "free_text";
         if (t === "free_text") {
           return {
+            ...commonExtras,
             question: q.question.trim(),
             questionType: "free_text" as const,
             idealAnswer: (q.idealAnswer ?? "").trim(),
@@ -1551,6 +1695,7 @@ export default function StationEditorPage() {
             .map((p) => p.text.trim())
             .filter((t) => t.length > 0);
           return {
+            ...commonExtras,
             question: q.question.trim(),
             questionType: "checklist" as const,
             idealAnswer: null,
@@ -1569,6 +1714,7 @@ export default function StationEditorPage() {
             ? { options, threshold: Math.min(q.threshold ?? correctCount, correctCount) }
             : { options };
         return {
+          ...commonExtras,
           question: q.question.trim(),
           questionType: t,
           idealAnswer: null,
@@ -1578,6 +1724,47 @@ export default function StationEditorPage() {
         };
       }),
   });
+
+  // Early auto-POST for new stations (Issue 3). As soon as a new station has
+  // a meaningful title (>3 chars), POST a minimal draft to the server so the
+  // work is recoverable across sessions / devices — matches Google Docs.
+  // Once savedStationId is set, the existing autosave below takes over.
+  // Guarded by a ref so it only fires once even if the title keeps changing
+  // while the request is in-flight.
+  useEffect(() => {
+    if (isEditing) return;
+    if (savedStationId !== null) return;
+    if (autoCreateAttemptedRef.current) return;
+    if (title.trim().length <= 3) return;
+    const timeout = setTimeout(async () => {
+      if (autoCreateAttemptedRef.current) return;
+      if (savedStationId !== null) return;
+      autoCreateAttemptedRef.current = true;
+      try {
+        setAutosaveStatus("saving");
+        const payload = { ...buildPayload(), isDraft: true };
+        const result = await createStation.mutateAsync(payload);
+        clearDraft("new");
+        setSavedStationId(result.id);
+        setDirty(false);
+        dirtyRef.current = false;
+        setLastSavedAt(Date.now());
+        queryClient.setQueryData([`/api/stations/${result.id}`], result);
+        loadedStationIdRef.current = result.id;
+        // Bypass the pushState guard for our own URL swap.
+        allowNavRef.current = true;
+        navigate(`/station/${result.id}/edit`, { replace: true });
+      } catch {
+        // Failed — let the user retry by editing again. Reset the guard so
+        // a subsequent keystroke triggers another attempt.
+        autoCreateAttemptedRef.current = false;
+      } finally {
+        setAutosaveStatus("idle");
+      }
+    }, 1500);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, savedStationId, isEditing]);
 
   // Autosave: after first save (savedStationId set), debounce 2s on dirty changes
   useEffect(() => {
@@ -1635,15 +1822,33 @@ export default function StationEditorPage() {
     setReferenceImageError(null);
     const newItemErrors: Record<string, string> = {};
 
-    if (type === "image_id" && !referenceImageUrl) {
-      setReferenceImageError("Upload a reference image to save this station");
-      hasError = true;
-    }
+    // Track the first field that failed validation so we can scroll and
+    // focus it after all checks run. Also collect a short summary string for
+    // the toast — we surface only the first error in the toast body so the
+    // user knows *what* to fix without being overwhelmed. Held in a mutable
+    // object so TS keeps the field types stable across closure mutations.
+    const firstError: { el: HTMLElement | null; summary: string | null } = {
+      el: null,
+      summary: null,
+    };
+    const markError = (el: HTMLElement | null, summary: string) => {
+      if (!firstError.el && el) firstError.el = el;
+      if (!firstError.summary) firstError.summary = summary;
+    };
 
     if (!title.trim()) {
       setTitleError("Title is required");
-      titleRef.current?.focus();
       hasError = true;
+      markError(titleRef.current, "Title is required — please add a title before saving");
+    }
+
+    if (type === "image_id" && !referenceImageUrl) {
+      setReferenceImageError("Upload a reference image to save this station");
+      hasError = true;
+      markError(
+        referenceImageWrapperRef.current,
+        "Reference image is required for Image ID stations",
+      );
     }
 
     // Q&A stations skip the sections requirement — they're pure examiner questions.
@@ -1663,6 +1868,10 @@ export default function StationEditorPage() {
       if (!hasValidQuestion) {
         setSectionsError("Add at least one complete examiner question");
         hasError = true;
+        markError(
+          sectionsContainerRef.current,
+          "Add at least one complete examiner question",
+        );
       } else {
         setSectionsError(null);
       }
@@ -1683,6 +1892,10 @@ export default function StationEditorPage() {
           "Add at least one checklist item or examiner question",
         );
         hasError = true;
+        markError(
+          sectionsContainerRef.current,
+          "Add at least one checklist item or examiner question",
+        );
       }
 
       // If the user added a section, it still needs at least one item —
@@ -1694,6 +1907,12 @@ export default function StationEditorPage() {
           newItemErrors[sec.id] =
             "Section must have at least one item with text";
           hasError = true;
+          markError(
+            document.querySelector<HTMLElement>(
+              `[data-section-id="${sec.id}"]`,
+            ),
+            "A section is missing items — every section needs at least one item",
+          );
         }
       }
     }
@@ -1702,17 +1921,23 @@ export default function StationEditorPage() {
 
     // Validate examiner questions: incomplete entries are an error.
     const newQuestionErrors: Record<string, string> = {};
+    const flagQ = (qid: string, msg: string) => {
+      newQuestionErrors[qid] = msg;
+      hasError = true;
+      markError(
+        document.querySelector<HTMLElement>(`[data-question-id="${qid}"]`),
+        msg,
+      );
+    };
     for (const q of questions) {
       const hasQ = q.question.trim().length > 0;
       const qType = q.questionType ?? "free_text";
       if (qType === "free_text") {
         const hasA = (q.idealAnswer ?? "").trim().length > 0;
         if (hasQ && !hasA) {
-          newQuestionErrors[q.id] = "Add an ideal answer or clear the question.";
-          hasError = true;
+          flagQ(q.id, "Add an ideal answer or clear the question.");
         } else if (!hasQ && hasA) {
-          newQuestionErrors[q.id] = "Add a question or clear the ideal answer.";
-          hasError = true;
+          flagQ(q.id, "Add a question or clear the ideal answer.");
         }
       } else if (qType === "checklist") {
         // Checklist questions only need a prompt. Empty-items is a warning
@@ -1720,8 +1945,7 @@ export default function StationEditorPage() {
         // is items entered without a prompt — author probably forgot.
         const filledItems = (q.keyPoints ?? []).filter((p) => p.text.trim());
         if (!hasQ && filledItems.length > 0) {
-          newQuestionErrors[q.id] = "Add a question or remove this entry.";
-          hasError = true;
+          flagQ(q.id, "Add a question or remove this entry.");
         }
       } else {
         const opts = q.options ?? [];
@@ -1729,28 +1953,52 @@ export default function StationEditorPage() {
         const correctCount = filledOpts.filter((o) => o.isCorrect).length;
         if (!hasQ) {
           if (filledOpts.length > 0) {
-            newQuestionErrors[q.id] = "Add a question or remove this entry.";
-            hasError = true;
+            flagQ(q.id, "Add a question or remove this entry.");
           }
           continue;
         }
         if (filledOpts.length < 2) {
-          newQuestionErrors[q.id] = "Add at least 2 options.";
-          hasError = true;
+          flagQ(q.id, "Add at least 2 options.");
         } else if (qType === "multiple_choice" && correctCount !== 1) {
-          newQuestionErrors[q.id] = "Mark exactly one correct option.";
-          hasError = true;
+          flagQ(q.id, "Mark exactly one correct option.");
         } else if (qType === "multi_select" && correctCount < 1) {
-          newQuestionErrors[q.id] = "Mark at least one correct option.";
-          hasError = true;
+          flagQ(q.id, "Mark at least one correct option.");
         }
       }
     }
     setQuestionErrors(newQuestionErrors);
 
-    if (hasError) return;
+    if (hasError) {
+      toast({
+        title: "Can't save yet",
+        description: firstError.summary ?? "Please fix the highlighted fields.",
+        variant: "destructive",
+      });
+      const target = firstError.el;
+      if (target) {
+        // Defer the scroll a tick so the new error styling lands first and
+        // the user sees the smooth jump *to a highlighted field*, not a
+        // bare one. Focus comes after the scroll so the keyboard doesn't
+        // fight the motion on mobile.
+        requestAnimationFrame(() => {
+          target.scrollIntoView({ behavior: "smooth", block: "center" });
+        });
+        if (typeof target.focus === "function") {
+          window.setTimeout(() => {
+            try {
+              target.focus({ preventScroll: true });
+            } catch {
+              target.focus();
+            }
+          }, 320);
+        }
+      }
+      return;
+    }
 
-    const payload = buildPayload();
+    // Explicit save — flag the row as no longer a draft. The PUT handler
+    // also forces this server-side, but we send it for clarity.
+    const payload = { ...buildPayload(), isDraft: false };
 
     try {
       if (savedStationId) {
@@ -1773,6 +2021,10 @@ export default function StationEditorPage() {
         // re-hydration that would re-key local section/item ids.
         queryClient.setQueryData([`/api/stations/${result.id}`], result);
         loadedStationIdRef.current = result.id;
+        // Bypass the dirty-state pushState guard for our own URL swap —
+        // the guard tears itself down on next render once savedStationId is
+        // set, but the navigate() call below runs first.
+        allowNavRef.current = true;
         // Silently swap the URL to the real station's edit route so
         // autosave/drafts continue keyed to the new id. No toast — the
         // "Saved" pill is the only feedback needed.
@@ -1836,7 +2088,7 @@ export default function StationEditorPage() {
       { key: "physical_exam", label: "Physical exam", description: "Examine and narrate.", emoji: "🩺" },
       { key: "communication", label: "Communication", description: "Break bad news, consent.", emoji: "👥" },
       { key: "image_id", label: "Image ID", description: "X-rays, ECGs, slides.", emoji: "🖼" },
-      { key: "qa", label: "Q&A / Oral", description: "Examiner questions only. MCQ, multi-select, free text.", emoji: "❓" },
+      { key: "qa", label: "Q&A-SOE", description: "Examiner questions only. MCQ, multi-select, free text.", emoji: "❓" },
       { key: "custom", label: "Custom", description: "Build from scratch.", emoji: "✦" },
     ];
     const chooseType = (key: string) => {
@@ -1992,7 +2244,10 @@ export default function StationEditorPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="rounded-2xl shadow-lg">
-                {["history_taking", "physical_exam", "communication", "image_id", "custom"].map((t) => (
+                {/* Source the option list from STATION_TYPES so we can't
+                    silently drop one (`qa` was missing here, causing edited
+                    Q&A-SOE stations to lose their type on save). */}
+                {STATION_TYPES.map((t) => (
                   <SelectItem key={t} value={t} className="h-9">
                     {stationTypeLabel(t)}
                   </SelectItem>
@@ -2065,7 +2320,7 @@ export default function StationEditorPage() {
 
         {/* Reference image (Image ID only) */}
         {type === "image_id" && (
-          <div className="space-y-2">
+          <div className="space-y-2" ref={referenceImageWrapperRef}>
             <Label className="text-label text-muted-foreground">Reference image</Label>
             <ImageEditor
               imageUrl={referenceImageUrl}
@@ -2161,7 +2416,7 @@ export default function StationEditorPage() {
         <div className="px-5 pt-6 pb-6 space-y-8 lg:h-[calc(100vh-56px)] lg:overflow-y-auto">
         {/* ==================== SECTIONS ==================== */}
         {type !== "qa" && (
-        <div>
+        <div ref={sectionsContainerRef}>
           <div className="mb-4 flex items-end justify-between">
             <h2 className="text-h2 text-foreground">Checklist sections</h2>
             <span className="text-caption text-muted-foreground tabular-nums">
@@ -2194,7 +2449,10 @@ export default function StationEditorPage() {
                 {sections.map((section, sectionIdx) => (
                   <SortableSection key={section.id} id={section.id}>
                     {(dragHandle) => (
-                  <Card className="overflow-hidden rounded-2xl border border-border/40 bg-card p-0 shadow-none">
+                  <Card
+                    data-section-id={section.id}
+                    className="overflow-hidden rounded-2xl border border-border/40 bg-card p-0 shadow-none"
+                  >
                     {/* Section header — minimal chrome */}
                     <div className="relative flex items-center gap-2 px-4 py-3">
                       {/* Full-height left-edge drag zone */}
@@ -2462,7 +2720,10 @@ export default function StationEditorPage() {
                   return (
                     <SortableItem key={q.id} id={q.id}>
                       {(dragHandle) => (
-                        <Card className="group overflow-hidden rounded-2xl border border-border/40 bg-card p-0 shadow-none">
+                        <Card
+                          data-question-id={q.id}
+                          className="group overflow-hidden rounded-2xl border border-border/40 bg-card p-0 shadow-none"
+                        >
                           <CardContent className="space-y-3 p-4">
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-1.5">
@@ -2575,6 +2836,25 @@ export default function StationEditorPage() {
                                 updateQuestion(q.id, "question", e.target.value)
                               }
                               className="h-12 rounded-xl border-0 bg-muted/30 px-4 text-[17px]"
+                            />
+
+                            <Textarea
+                              placeholder="Optional context shown alongside the question (setup, stem, vignette)…"
+                              value={q.description ?? ""}
+                              onChange={(e) =>
+                                updateQuestion(q.id, "description", e.target.value)
+                              }
+                              className="min-h-[56px] resize-y rounded-xl border-0 bg-muted/20 px-4 py-3 text-[15px]"
+                            />
+
+                            <ExaminerMediaPicker
+                              media={q.questionMedia ?? []}
+                              onChange={(next) =>
+                                updateQuestion(q.id, "questionMedia", next)
+                              }
+                              defaultVisibility="exam"
+                              label="Question media"
+                              emptyHint="Add an image learners should see with the question"
                             />
 
                             {qType === "free_text" && (
@@ -2751,6 +3031,32 @@ export default function StationEditorPage() {
                               </div>
                             )}
 
+                            {/* Explanation — study-mode material that
+                                tells learners WHY the ideal answer is what
+                                it is. Hidden during examination. */}
+                            <div className="mt-2 space-y-2 rounded-xl border border-dashed border-border/40 bg-muted/10 p-3">
+                              <p className="text-caption font-medium text-foreground">
+                                Explanation (study mode)
+                              </p>
+                              <Textarea
+                                placeholder="Why is this the right answer? Add background, references, reasoning…"
+                                value={q.explanation ?? ""}
+                                onChange={(e) =>
+                                  updateQuestion(q.id, "explanation", e.target.value)
+                                }
+                                className="min-h-[64px] resize-y rounded-lg border-0 bg-background px-3 py-2 text-[15px]"
+                              />
+                              <ExaminerMediaPicker
+                                media={q.explanationMedia ?? []}
+                                onChange={(next) =>
+                                  updateQuestion(q.id, "explanationMedia", next)
+                                }
+                                defaultVisibility="study"
+                                label="Explanation media"
+                                emptyHint="Add a diagram or reference image for the explanation"
+                              />
+                            </div>
+
                             {questionErrors[q.id] && (
                               <p className="text-caption text-destructive">{questionErrors[q.id]}</p>
                             )}
@@ -2785,12 +3091,18 @@ export default function StationEditorPage() {
         </div>
       </div>
 
-      <AlertDialog open={confirmLeaveOpen} onOpenChange={setConfirmLeaveOpen}>
+      <AlertDialog
+        open={confirmLeaveOpen}
+        onOpenChange={(o) => {
+          setConfirmLeaveOpen(o);
+          if (!o) setPendingNavPath(null);
+        }}
+      >
         <AlertDialogContent className="rounded-2xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Leave with unsaved changes?</AlertDialogTitle>
+            <AlertDialogTitle>You have unsaved changes</AlertDialogTitle>
             <AlertDialogDescription>
-              Your unsaved edits will be lost.
+              Leave anyway? Your unsaved edits will be lost.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -2799,7 +3111,14 @@ export default function StationEditorPage() {
               className="bg-destructive text-destructive-foreground"
               onClick={() => {
                 setConfirmLeaveOpen(false);
-                navigate(savedStationId ? `/station/${savedStationId}` : "/my-stations");
+                // Bypass the pushState guard for the navigation we're about
+                // to perform on the user's behalf.
+                allowNavRef.current = true;
+                const target =
+                  pendingNavPath ??
+                  (savedStationId ? `/station/${savedStationId}` : "/my-stations");
+                setPendingNavPath(null);
+                navigate(target);
               }}
             >
               Leave
@@ -3333,6 +3652,13 @@ function MultiMediaEditor({
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Async uploads must read the latest media via a ref, not the closure
+  // over the `media` prop. Otherwise two parallel uploads each see the
+  // pre-upload snapshot and the second onChange overwrites the first —
+  // which manifested as "I uploaded two images but only one saved."
+  const mediaRef = useRef(media);
+  mediaRef.current = media;
+
   const uploadImage = async (file: File) => {
     try {
       const fd = new FormData();
@@ -3341,7 +3667,19 @@ function MultiMediaEditor({
       if (!res.ok) throw new Error(String(res.status));
       const data = await res.json();
       if (data?.url) {
-        const next = [...media, { type: "image" as const, url: data.url, caption: null, order: media.length }];
+        const current = mediaRef.current;
+        const next = [
+          ...current,
+          {
+            type: "image" as const,
+            url: data.url,
+            caption: null,
+            order: current.length,
+          },
+        ];
+        // Keep the ref in sync immediately so a back-to-back upload starting
+        // before the parent re-renders still sees this addition.
+        mediaRef.current = next;
         onChange(next);
       } else throw new Error("no url");
     } catch {
@@ -3396,10 +3734,12 @@ function MultiMediaEditor({
       <div
         tabIndex={0}
         onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
+        onDrop={async (e) => {
           e.preventDefault();
-          const f = e.dataTransfer.files?.[0];
-          if (f) uploadImage(f);
+          const files = Array.from(e.dataTransfer.files ?? []);
+          for (const f of files) {
+            await uploadImage(f);
+          }
         }}
         onPaste={(e) => {
           const clipItems = Array.from(e.clipboardData?.items || []);
@@ -3420,10 +3760,17 @@ function MultiMediaEditor({
           ref={inputRef}
           type="file"
           accept="image/png,image/jpeg,image/webp"
+          multiple
           className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) uploadImage(f);
+          onChange={async (e) => {
+            const files = Array.from(e.target.files ?? []);
+            // Serialize uploads so each one sees the previous one's ref
+            // update — keeps order deterministic and matches user intent.
+            for (const f of files) {
+              await uploadImage(f);
+            }
+            // Allow re-picking the same file later by clearing the input.
+            e.target.value = "";
           }}
         />
       </div>

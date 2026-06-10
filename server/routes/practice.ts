@@ -794,6 +794,9 @@ const examinerQuestionInputSchema = z.object({
   ]),
   idealAnswer: z.string().nullable(),
   keyPoints: z.array(z.string()).max(50),
+  // Optional setup / vignette context. Passed through to the grader so
+  // it can score the answer against the same context the student saw.
+  description: z.string().max(20_000).nullish(),
 });
 
 const examinerCheckSchema = z
@@ -847,12 +850,15 @@ function buildExaminerUserPrompt(
 ): string {
   const questionBlock = questions
     .map((q, i) => {
+      const desc = q.description
+        ? `\n   Context: "${q.description.trim()}"`
+        : "";
       const kp =
         q.keyPoints.length > 0
           ? `\n   Key points (in order): ${q.keyPoints.map((k) => `"${k}"`).join(", ")}`
           : "";
       const ideal = q.idealAnswer ? `\n   Ideal answer: "${q.idealAnswer}"` : "";
-      return `Question ${i + 1} (id=${q.id}, type=${q.questionType}): "${q.question}"${ideal}${kp}`;
+      return `Question ${i + 1} (id=${q.id}, type=${q.questionType}): "${q.question}"${desc}${ideal}${kp}`;
     })
     .join("\n\n");
   return `QUESTIONS:\n${questionBlock}\n\nTRANSCRIPT:\n${transcript}`;

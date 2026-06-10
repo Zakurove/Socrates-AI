@@ -871,7 +871,11 @@ export default function ResultsPage() {
                               Question {qi + 1}
                             </p>
                             <p className="text-body font-medium text-foreground">
-                              {qr.question.question}
+                              {qr.question?.question ?? (
+                                <span className="italic text-muted-foreground">
+                                  Question no longer exists (station edited)
+                                </span>
+                              )}
                             </p>
                           </div>
                           <span
@@ -890,14 +894,106 @@ export default function ResultsPage() {
                         </div>
                       </AccordionTrigger>
                       <AccordionContent className="px-5 pb-5 space-y-4">
-                        <div className="rounded-xl bg-muted/40 p-4 space-y-1">
-                          <p className="text-label text-muted-foreground uppercase">
-                            Ideal answer
+                        {/* Question context (description) + any question
+                            media the author attached. Study-mode here:
+                            every media row is shown regardless of its
+                            exam/study visibility flag, since the exam is
+                            already over. */}
+                        {(qr.question as any)?.description && (
+                          <p className="whitespace-pre-wrap text-caption text-muted-foreground">
+                            {(qr.question as any).description}
                           </p>
-                          <p className="text-caption text-foreground/80 leading-relaxed">
-                            {qr.question.idealAnswer}
-                          </p>
-                        </div>
+                        )}
+                        {(() => {
+                          const m = ((qr.question as any)?.media ?? []) as Array<{
+                            type: "image" | "video";
+                            url: string;
+                            caption?: string | null;
+                            phase: "question" | "explanation";
+                          }>;
+                          const qMedia = m.filter((x) => x.phase === "question");
+                          if (qMedia.length === 0) return null;
+                          return (
+                            <div className="grid grid-cols-2 gap-2">
+                              {qMedia.map((mm, i) => (
+                                <figure key={`${mm.url}-${i}`} className="space-y-1">
+                                  <img
+                                    src={mm.url}
+                                    alt={mm.caption ?? ""}
+                                    className="aspect-video w-full rounded-lg border border-border/60 object-cover"
+                                  />
+                                  {mm.caption && (
+                                    <figcaption className="text-[11px] text-muted-foreground">
+                                      {mm.caption}
+                                    </figcaption>
+                                  )}
+                                </figure>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                        {(() => {
+                          const qq = qr.question;
+                          if (!qq) return null;
+                          // Free-text: show the ideal answer as before.
+                          if (
+                            qq.questionType === "free_text" &&
+                            qq.idealAnswer
+                          ) {
+                            return (
+                              <div className="rounded-xl bg-muted/40 p-4 space-y-1">
+                                <p className="text-label text-muted-foreground uppercase">
+                                  Ideal answer
+                                </p>
+                                <p className="text-caption text-foreground/80 leading-relaxed">
+                                  {qq.idealAnswer}
+                                </p>
+                              </div>
+                            );
+                          }
+                          // MCQ / multi-select: show every option, badge the
+                          // correct one(s). No "Ideal answer" header because
+                          // the answer IS the option highlight.
+                          if (
+                            (qq.questionType === "multiple_choice" ||
+                              qq.questionType === "multi_select") &&
+                            qq.config?.options?.length
+                          ) {
+                            return (
+                              <div className="rounded-xl bg-muted/40 p-4 space-y-2">
+                                <p className="text-label text-muted-foreground uppercase">
+                                  Options
+                                </p>
+                                <ul className="space-y-1.5">
+                                  {qq.config.options.map((o, oi) => (
+                                    <li
+                                      key={oi}
+                                      className={cn(
+                                        "flex items-start gap-2 text-caption leading-snug",
+                                        o.isCorrect
+                                          ? "font-semibold text-success"
+                                          : "text-foreground/70",
+                                      )}
+                                    >
+                                      <span
+                                        className={cn(
+                                          "mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px]",
+                                          o.isCorrect
+                                            ? "bg-success/20"
+                                            : "bg-muted-foreground/15",
+                                        )}
+                                      >
+                                        {o.isCorrect ? "✓" : ""}
+                                      </span>
+                                      <span>{o.text}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
 
                         {/* Checklist: per-item breakdown. Tap an item to
                             flip present↔missed; score recomputes from the
@@ -1066,6 +1162,53 @@ export default function ResultsPage() {
                             </div>
                           </div>
                         )}
+
+                        {/* Explanation block — study material revealed
+                            after grading. Visible regardless of the
+                            per-media visibility flag, since we are past
+                            the exam. */}
+                        {(() => {
+                          const eqRaw = (qr.question ?? {}) as any;
+                          const m = (eqRaw.media ?? []) as Array<{
+                            type: "image" | "video";
+                            url: string;
+                            caption?: string | null;
+                            phase: "question" | "explanation";
+                          }>;
+                          const eMedia = m.filter((x) => x.phase === "explanation");
+                          if (!eqRaw.explanation && eMedia.length === 0)
+                            return null;
+                          return (
+                            <div className="space-y-2 rounded-xl border border-border/50 bg-muted/20 p-4">
+                              <p className="text-label uppercase text-muted-foreground">
+                                Explanation
+                              </p>
+                              {eqRaw.explanation && (
+                                <p className="whitespace-pre-wrap text-caption leading-relaxed text-foreground/90">
+                                  {eqRaw.explanation}
+                                </p>
+                              )}
+                              {eMedia.length > 0 && (
+                                <div className="grid grid-cols-2 gap-2">
+                                  {eMedia.map((mm, i) => (
+                                    <figure key={`${mm.url}-${i}`} className="space-y-1">
+                                      <img
+                                        src={mm.url}
+                                        alt={mm.caption ?? ""}
+                                        className="aspect-video w-full rounded-lg border border-border/60 object-cover"
+                                      />
+                                      {mm.caption && (
+                                        <figcaption className="text-[11px] text-muted-foreground">
+                                          {mm.caption}
+                                        </figcaption>
+                                      )}
+                                    </figure>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </AccordionContent>
                     </AccordionItem>
                   );

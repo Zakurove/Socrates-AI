@@ -214,18 +214,29 @@ export default function MyStationsPage() {
 
 function StationRow({ station }: { station: Station }) {
   const Icon = stationTypeIcon(station.type);
+  const isDraft = station.isDraft;
   return (
     <Link
       href={`/station/${station.id}`}
-      className="flex w-full items-center gap-3 px-5 py-4 min-h-[72px] transition-colors hover:bg-muted/30 dark:hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className={cn(
+        "flex w-full items-center gap-3 px-5 py-4 min-h-[72px] transition-colors hover:bg-muted/30 dark:hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        isDraft && "opacity-70",
+      )}
     >
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
         <Icon className="h-[18px] w-[18px]" />
       </div>
       <div className="min-w-0 flex-1">
-        <h3 className="truncate text-[15px] font-semibold leading-tight text-foreground">
-          {station.title}
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="truncate text-[15px] font-semibold leading-tight text-foreground">
+            {station.title}
+          </h3>
+          {isDraft && (
+            <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Draft
+            </span>
+          )}
+        </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-1.5 text-caption text-muted-foreground">
           <span>{stationTypeLabel(station.type)}</span>
           {station.specialty && (

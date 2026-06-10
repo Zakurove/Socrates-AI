@@ -260,7 +260,9 @@ router.post("/:id/stations", async (req, res, next) => {
     }
     const { stationId, order } = parsed.data;
 
-    // Caller must own the station they're adding (stations remain user-owned).
+    // Caller must own the source station (we're going to fork their copy
+    // into a group-owned working copy — their personal version stays
+    // untouched in My Stations).
     const station = await storage.getStation(stationId);
     if (!station) {
       return res.status(404).json({ message: "Station not found" });
@@ -268,9 +270,26 @@ router.post("/:id/stations", async (req, res, next) => {
     if (station.userId !== req.user!.id) {
       return res.status(403).json({ message: "Forbidden" });
     }
+    // Don't double-fork: if they're trying to share a station that's
+    // already a group copy (e.g. dragging between collections), reject.
+    if (station.collectionId != null) {
+      return res.status(400).json({
+        message:
+          "This station is already a group copy. Share the original from My Stations instead.",
+      });
+    }
 
-    await storage.addStationToCollection(id, stationId, order);
-    return res.status(201).json({ message: "Station added to collection" });
+    // Fork the station into a group-owned copy and link THAT to the
+    // collection. The personal station is never modified.
+    const groupCopy = await storage.forkStation(stationId, req.user!.id, {
+      collectionId: id,
+    });
+    await storage.addStationToCollection(id, groupCopy.id, order);
+    return res.status(201).json({
+      message: "Station shared to collection",
+      groupStationId: groupCopy.id,
+      sourceStationId: stationId,
+    });
   } catch (err) {
     next(err);
   }
@@ -290,7 +309,16 @@ router.delete("/:id/stations/:stationId", async (req, res, next) => {
     const role = await assertCollectionRole(res, id, req.user!.id, "editor");
     if (role == null) return;
 
-    await storage.removeStationFromCollection(id, stationId);
+    // For group copies, removal from the collection deletes the copy
+    // itself (it has no purpose outside the group). For legacy/personal
+    // stations that were directly linked (pre-fork-on-share), we just
+    // unlink the join row and leave the station alone.
+    const station = await storage.getStation(stationId);
+    if (station?.collectionId === id) {
+      await storage.deleteStation(stationId);
+    } else {
+      await storage.removeStationFromCollection(id, stationId);
+    }
     return res.status(204).send();
   } catch (err) {
     next(err);

@@ -14,11 +14,22 @@ import { cn } from "@/lib/utils";
 export type ExaminerQuestion = {
   id: number;
   question: string;
+  description?: string | null;
   questionType: "free_text" | "checklist" | "multiple_choice" | "multi_select";
   idealAnswer: string | null;
   keyPoints: string[];
   config: any;
   imageUrl?: string | null;
+  // Multi-media on the question. Only entries whose phase is 'question'
+  // AND visibility is 'exam' or 'both' should render during examination.
+  media?: Array<{
+    type: "image" | "video";
+    url: string;
+    caption?: string | null;
+    order: number;
+    phase: "question" | "explanation";
+    visibility: "exam" | "study" | "both";
+  }>;
   order: number;
 };
 
@@ -311,6 +322,7 @@ export function ExaminerNarrationPhase({
             id: q.id,
             questionType: q.questionType,
             question: q.question,
+            description: q.description ?? null,
             idealAnswer: q.idealAnswer ?? null,
             keyPoints: q.keyPoints ?? [],
           })),
@@ -659,12 +671,45 @@ export function ExaminerNarrationPhase({
           </span>
         </div>
 
-        {focusedQuestion.imageUrl && (
-          <img
-            src={focusedQuestion.imageUrl}
-            alt=""
-            className="mb-4 max-h-56 w-full rounded-xl object-contain"
-          />
+        {(() => {
+          // Exam phase: show only question-phase media tagged exam-visible.
+          // Explanation media is hidden until the results page.
+          // NOTE: we deliberately do NOT fall back to focusedQuestion.imageUrl
+          // here — the legacy column may mirror a study-only image and
+          // rendering it would leak study material to the learner during
+          // the exam. Migration 0018 backfills any legacy imageUrl into
+          // examiner_question_media (phase=question, visibility=exam), so
+          // there is no real loss.
+          const examMedia = (focusedQuestion.media ?? []).filter(
+            (m) =>
+              m.phase === "question" &&
+              (m.visibility === "exam" || m.visibility === "both"),
+          );
+          if (examMedia.length === 0) return null;
+          const items = examMedia;
+          return (
+            <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {items.map((m, i) => (
+                <figure key={`${m.url}-${i}`} className="space-y-1">
+                  <img
+                    src={m.url}
+                    alt={m.caption ?? ""}
+                    className="max-h-56 w-full rounded-xl object-contain"
+                  />
+                  {m.caption && (
+                    <figcaption className="text-caption text-muted-foreground">
+                      {m.caption}
+                    </figcaption>
+                  )}
+                </figure>
+              ))}
+            </div>
+          );
+        })()}
+        {focusedQuestion.description && (
+          <p className="mb-3 whitespace-pre-wrap text-[15px] text-muted-foreground">
+            {focusedQuestion.description}
+          </p>
         )}
 
         <p

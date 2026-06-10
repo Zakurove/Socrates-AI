@@ -17,11 +17,11 @@ export function stationTypeLabel(type: string): string {
     physical_exam: "Physical Exam",
     communication: "Communication",
     image_id: "Image ID",
-    qa: "Q&A",
+    qa: "Q&A-SOE",
     custom: "Custom",
     // Legacy values — render as their replacements until data is migrated.
     equipment_id: "Image ID",
-    oral_qa: "Q&A",
+    oral_qa: "Q&A-SOE",
   };
   return labels[type] || type;
 }

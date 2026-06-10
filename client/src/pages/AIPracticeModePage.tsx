@@ -315,6 +315,7 @@ export default function AIPracticeModePage() {
       .map((q) => ({
         id: q.id,
         question: q.question,
+        description: (q as any).description ?? null,
         questionType: ((q as any).questionType ?? "free_text") as
           | "free_text"
           | "checklist"
@@ -324,6 +325,7 @@ export default function AIPracticeModePage() {
         keyPoints: (q as any).keyPoints ?? [],
         config: (q as any).config ?? null,
         imageUrl: (q as any).imageUrl ?? null,
+        media: (q as any).media ?? [],
         order: q.order,
       }));
   }, [station]);
@@ -866,6 +868,7 @@ export default function AIPracticeModePage() {
                     id: q.id,
                     questionType: (q as any).questionType ?? "free_text",
                     question: q.question,
+                    description: (q as any).description ?? null,
                     idealAnswer: q.idealAnswer,
                     keyPoints: (q as any).keyPoints ?? [],
                   })),
@@ -959,6 +962,7 @@ export default function AIPracticeModePage() {
                 questions: stationExaminerQuestions.map((q) => ({
                   id: q.id,
                   question: q.question,
+                  description: (q as any).description ?? null,
                   idealAnswer: q.idealAnswer,
                   keyPoints: q.keyPoints ?? [],
                   // Drives strict per-item scoring server-side for the
@@ -1858,6 +1862,45 @@ export default function AIPracticeModePage() {
             </div>
           ) : latestAIQuestion ? (
             <>
+              {/* Conversation mode is driven free-form by Gemini, so we
+                  can't pinpoint which question the examiner is currently
+                  asking. Surface all exam-visible question media as a
+                  reference strip so learners can look at the relevant
+                  image when the examiner references it verbally. Study-
+                  only and explanation media stay hidden until results. */}
+              {(() => {
+                const allExamMedia = examinerQuestions.flatMap((q: any) =>
+                  ((q.media ?? []) as any[])
+                    .filter(
+                      (m: any) =>
+                        m.phase === "question" &&
+                        (m.visibility === "exam" || m.visibility === "both"),
+                    )
+                    .map((m: any) => ({ ...m, qId: q.question })),
+                );
+                if (allExamMedia.length === 0) return null;
+                return (
+                  <div className="mb-6 -mx-1 flex max-w-full gap-2 overflow-x-auto px-1 pb-2">
+                    {allExamMedia.map((m: any, i: number) => (
+                      <figure
+                        key={`${m.qId}-${m.url}-${i}`}
+                        className="w-32 shrink-0 space-y-1"
+                      >
+                        <img
+                          src={m.url}
+                          alt={m.caption ?? ""}
+                          className="aspect-video w-full rounded-lg border border-border/60 object-cover"
+                        />
+                        {m.caption && (
+                          <figcaption className="line-clamp-2 text-[10px] text-muted-foreground">
+                            {m.caption}
+                          </figcaption>
+                        )}
+                      </figure>
+                    ))}
+                  </div>
+                );
+              })()}
               <p className="text-h2 max-w-prose font-display text-foreground">
                 {latestAIQuestion}
                 {gemini.isAISpeaking && (

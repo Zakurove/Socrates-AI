@@ -103,6 +103,24 @@ export const reportStatusEnum = pgEnum("report_status", [
   "removed",
 ]);
 
+// Where on an examiner question a media asset attaches.
+//   'question'    → shown with the question itself (e.g. a slide / X-ray)
+//   'explanation' → shown alongside the answer's explanation (study material)
+export const examinerMediaPhaseEnum = pgEnum("examiner_media_phase", [
+  "question",
+  "explanation",
+]);
+
+// When the media is shown.
+//   'exam'  → during the examination phase only
+//   'study' → only after answering, in study/review mode
+//   'both'  → always
+export const examinerMediaVisibilityEnum = pgEnum("examiner_media_visibility", [
+  "exam",
+  "study",
+  "both",
+]);
+
 export const reportTargetEnum = pgEnum("report_target", [
   "station",
   "collection",
@@ -130,6 +148,14 @@ export const stations = pgTable("stations", {
   userId: integer("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
+  // When set, the station is a "group copy" — owned by the collection,
+  // not by the user in userId. Edit rights flow from collection
+  // membership (editor+). userId still points at whoever minted the fork
+  // for analytics/audit purposes. NULL → personal station (default).
+  collectionId: integer("collection_id").references(
+    (): AnyPgColumn => collections.id,
+    { onDelete: "cascade" },
+  ),
   title: varchar("title", { length: 255 }).notNull(),
   type: stationTypeEnum("type").notNull().default("custom"),
   defaultTimeMinutes: integer("default_time_minutes").notNull().default(7),
@@ -150,6 +176,7 @@ export const stations = pgTable("stations", {
   starCount: integer("star_count").notNull().default(0),
   forkCount: integer("fork_count").notNull().default(0),
   practiceCount: integer("practice_count").notNull().default(0),
+  isDraft: boolean("is_draft").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -238,14 +265,39 @@ export const examinerQuestions = pgTable("examiner_questions", {
     .notNull()
     .references(() => stations.id, { onDelete: "cascade" }),
   question: text("question").notNull(),
+  // Optional setup / context for the question itself (e.g. "Patient X
+  // presents with…"). Distinct from the question prompt.
+  description: text("description"),
   questionType: examinerQuestionTypeEnum("question_type")
     .notNull()
     .default("free_text"),
   idealAnswer: text("ideal_answer"),
   keyPoints: jsonb("key_points").$type<string[]>().default([]),
+  // Free-form rationale for why the ideal answer is what it is — shown
+  // in study/review mode so the user understands the reasoning, not just
+  // the bullet list of keyPoints (which are graded against).
+  explanation: text("explanation"),
   config: jsonb("config").$type<ExaminerQuestionConfig>(),
+  // Legacy single-image column. New writes funnel through
+  // examiner_question_media; this column stays mirrored to the first
+  // 'question' phase image for backwards-compatible reads.
   imageUrl: varchar("image_url", { length: 500 }),
   order: integer("order").notNull().default(0),
+});
+
+export const examinerQuestionMedia = pgTable("examiner_question_media", {
+  id: serial("id").primaryKey(),
+  questionId: integer("question_id")
+    .notNull()
+    .references(() => examinerQuestions.id, { onDelete: "cascade" }),
+  type: text("type").notNull(), // 'image' | 'video'
+  url: text("url").notNull(),
+  caption: text("caption"),
+  order: integer("order").notNull().default(0),
+  phase: examinerMediaPhaseEnum("phase").notNull().default("question"),
+  visibility: examinerMediaVisibilityEnum("visibility")
+    .notNull()
+    .default("exam"),
 });
 
 // ============ COLLECTIONS ============
@@ -341,9 +393,13 @@ export const examinerQuestionResults = pgTable("examiner_question_results", {
   sessionId: integer("session_id")
     .notNull()
     .references(() => sessions.id, { onDelete: "cascade" }),
-  questionId: integer("question_id")
-    .notNull()
-    .references(() => examinerQuestions.id, { onDelete: "cascade" }),
+  // SET NULL (not CASCADE) so historical results survive when the
+  // underlying examiner_questions row is replaced on station edits.
+  // See migration 0019 for the rationale.
+  questionId: integer("question_id").references(
+    () => examinerQuestions.id,
+    { onDelete: "set null" },
+  ),
   userAnswerTranscript: text("user_answer_transcript"),
   score: real("score"), // 0.0 to 1.0
   // Frozen at save time — mirror of `score` at the moment of grading.
@@ -624,10 +680,21 @@ export const itemMediaRelations = relations(itemMedia, ({ one }) => ({
 
 export const examinerQuestionsRelations = relations(
   examinerQuestions,
-  ({ one }) => ({
+  ({ one, many }) => ({
     station: one(stations, {
       fields: [examinerQuestions.stationId],
       references: [stations.id],
+    }),
+    media: many(examinerQuestionMedia),
+  })
+);
+
+export const examinerQuestionMediaRelations = relations(
+  examinerQuestionMedia,
+  ({ one }) => ({
+    question: one(examinerQuestions, {
+      fields: [examinerQuestionMedia.questionId],
+      references: [examinerQuestions.id],
     }),
   })
 );
@@ -832,6 +899,7 @@ export type InsertStation = z.infer<typeof insertStationSchema>;
 export type Section = typeof sections.$inferSelect;
 export type Item = typeof items.$inferSelect;
 export type ExaminerQuestion = typeof examinerQuestions.$inferSelect;
+export type ExaminerQuestionMedia = typeof examinerQuestionMedia.$inferSelect;
 export type Collection = typeof collections.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type ItemResult = typeof itemResults.$inferSelect;
@@ -949,14 +1017,26 @@ const examinerOptionSchema = z.object({
   isCorrect: z.boolean(),
 });
 
+export const examinerQuestionMediaPayloadSchema = z.object({
+  type: z.enum(["image", "video"]),
+  url: z.string().max(500),
+  caption: z.string().max(500).nullish(),
+  order: z.number(),
+  phase: z.enum(["question", "explanation"]).default("question"),
+  visibility: z.enum(["exam", "study", "both"]).default("exam"),
+});
+
 export const examinerQuestionPayloadSchema = z
   .object({
     question: z.string().min(1),
+    description: z.string().max(20000).nullish(),
     questionType: z.enum(EXAMINER_QUESTION_TYPES).default("free_text"),
     idealAnswer: z.string().nullish(),
     keyPoints: z.array(z.string()).default([]),
+    explanation: z.string().max(20000).nullish(),
     config: z.any().nullish(),
     imageUrl: z.string().max(500).nullish(),
+    media: z.array(examinerQuestionMediaPayloadSchema).optional(),
     order: z.number(),
   })
   .superRefine((q, ctx) => {
@@ -1020,6 +1100,10 @@ export const examinerQuestionPayloadSchema = z
 export const createStationSchema = z.object({
   title: z.string().min(1).max(255),
   type: z.enum(STATION_TYPES),
+  // Auto-POSTs from the editor send `true` so the row is flagged until the
+  // user explicitly saves. Omitted on legacy/seed paths -> defaults to true
+  // in storage.createStation.
+  isDraft: z.boolean().optional(),
   hasPatientBriefing: z.boolean().optional(),
   aiPatientEnabled: z.boolean().optional(),
   defaultTimeMinutes: z.number().min(1).max(30).default(7),

@@ -29,6 +29,7 @@ import { safeFrom } from "@/lib/navigation";
 
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/PageHeader";
+import { GroupEditionsPanel } from "@/components/collections/GroupEditionsPanel";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -529,6 +530,30 @@ export default function StationDetailPage() {
 
       {/* Main content */}
       <main className="mx-auto max-w-[440px] lg:max-w-3xl px-5 pt-6">
+        {/* Draft banner — auto-saved row that the owner never explicitly
+            committed. Only the owner sees this (drafts are always private). */}
+        {isOwner && station.isDraft && (
+          <div className="mb-6 flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-semibold text-amber-900 dark:text-amber-200">
+                This station is a draft
+              </p>
+              <p className="mt-0.5 text-[12px] text-amber-800/80 dark:text-amber-200/80">
+                Finish editing to save it. Drafts are deleted after 7 days.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigate(`/station/${station.id}/edit`)}
+              className="shrink-0 border-amber-500/50 bg-white/60 text-amber-900 hover:bg-white hover:text-amber-900 dark:bg-transparent dark:text-amber-200"
+            >
+              <Edit className="mr-1.5 h-3.5 w-3.5" />
+              Continue editing
+            </Button>
+          </div>
+        )}
+
         <motion.header
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
@@ -576,6 +601,12 @@ export default function StationDetailPage() {
             </Button>
           </div>
         </motion.header>
+
+        {/* Group editions: only shown to the owner of a personal station
+            (never on a group copy viewed from inside a collection). */}
+        {isOwner && (station as any).collectionId == null && (
+          <GroupEditionsPanel stationId={station.id} />
+        )}
 
         {/* Reference image (for image_id stations etc.) */}
         {station.referenceImageUrl && (
@@ -890,13 +921,23 @@ export default function StationDetailPage() {
 interface ExaminerQuestionLike {
   id: number;
   question: string;
+  description?: string | null;
   questionType?: string;
   idealAnswer?: string | null;
   keyPoints?: string[] | null;
+  explanation?: string | null;
   config?: {
     options?: Array<{ text: string; isCorrect: boolean }>;
     threshold?: number;
   } | null;
+  media?: Array<{
+    type: "image" | "video";
+    url: string;
+    caption?: string | null;
+    order: number;
+    phase: "question" | "explanation";
+    visibility: "exam" | "study" | "both";
+  }>;
 }
 
 const TYPE_LABELS: Record<string, { label: string; icon: any }> = {
@@ -921,6 +962,13 @@ function ExaminerQuestionCard({
   const typeMeta = TYPE_LABELS[typeKey] ?? TYPE_LABELS.free_text;
   const TypeIconC = typeMeta.icon;
 
+  // Study mode shows ALL media (any visibility) — exam-only and
+  // study-only assets are both useful for review.
+  const questionMedia = (q.media ?? []).filter((m) => m.phase === "question");
+  const explanationMedia = (q.media ?? []).filter(
+    (m) => m.phase === "explanation",
+  );
+
   return (
     <div className="rounded-2xl border border-border/60 bg-card shadow-card overflow-hidden">
       {/* Header strip */}
@@ -932,6 +980,29 @@ function ExaminerQuestionCard({
           <p className="text-[17px] font-semibold leading-snug text-foreground">
             {q.question}
           </p>
+          {q.description && (
+            <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-muted-foreground">
+              {q.description}
+            </p>
+          )}
+          {questionMedia.length > 0 && (
+            <div className="grid grid-cols-2 gap-2">
+              {questionMedia.map((m, i) => (
+                <figure key={`${m.url}-${i}`} className="space-y-1">
+                  <img
+                    src={m.url}
+                    alt={m.caption ?? ""}
+                    className="aspect-video w-full rounded-lg border border-border/60 object-cover"
+                  />
+                  {m.caption && (
+                    <figcaption className="text-[11px] text-muted-foreground">
+                      {m.caption}
+                    </figcaption>
+                  )}
+                </figure>
+              ))}
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
               <TypeIconC className="h-3 w-3" aria-hidden />
@@ -976,9 +1047,39 @@ function ExaminerQuestionCard({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.18 }}
-          className="border-t border-border/40 bg-warm-50/60 px-5 py-5"
+          className="border-t border-border/40 bg-warm-50/60 px-5 py-5 space-y-4"
         >
           <ExaminerAnswerBody q={q} typeKey={typeKey} />
+          {(q.explanation || explanationMedia.length > 0) && (
+            <div className="space-y-2 rounded-xl border border-border/50 bg-background/60 p-4">
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                Explanation
+              </p>
+              {q.explanation && (
+                <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-foreground/90">
+                  {q.explanation}
+                </p>
+              )}
+              {explanationMedia.length > 0 && (
+                <div className="grid grid-cols-2 gap-2">
+                  {explanationMedia.map((m, i) => (
+                    <figure key={`${m.url}-${i}`} className="space-y-1">
+                      <img
+                        src={m.url}
+                        alt={m.caption ?? ""}
+                        className="aspect-video w-full rounded-lg border border-border/60 object-cover"
+                      />
+                      {m.caption && (
+                        <figcaption className="text-[11px] text-muted-foreground">
+                          {m.caption}
+                        </figcaption>
+                      )}
+                    </figure>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </motion.div>
       )}
     </div>

@@ -17,9 +17,12 @@ export function StationCard({
 }: StationCardProps) {
   const [, navigate] = useLocation();
 
+  const isDraft = station.isDraft;
   return (
     <Card
-      className="cursor-pointer transition-shadow hover:shadow-md active:shadow-sm"
+      className={`cursor-pointer transition-shadow hover:shadow-md active:shadow-sm${
+        isDraft ? " opacity-70" : ""
+      }`}
       onClick={() => navigate(`/station/${station.id}`)}
     >
       <CardContent className="p-4">
@@ -27,6 +30,11 @@ export function StationCard({
           <h3 className="line-clamp-2 text-base font-semibold leading-tight text-foreground">
             {station.title}
           </h3>
+          {isDraft && (
+            <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Draft
+            </span>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">

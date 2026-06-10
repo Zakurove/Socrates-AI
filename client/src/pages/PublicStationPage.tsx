@@ -606,6 +606,20 @@ export default function PublicStationPage() {
                 .sort((a, b) => a.order - b.order)
                 .map((q, qi) => {
                   const isOpen = !!showAnswers[q.id];
+                  // Library is a study surface (read-only preview before
+                  // forking) — render every media row regardless of its
+                  // exam/study flag.
+                  const allMedia = (((q as any).media ?? []) as Array<{
+                    type: "image" | "video";
+                    url: string;
+                    caption?: string | null;
+                    phase: "question" | "explanation";
+                  }>) ?? [];
+                  const qMedia = allMedia.filter((m) => m.phase === "question");
+                  const eMedia = allMedia.filter((m) => m.phase === "explanation");
+                  const opts: Array<{ text: string; isCorrect: boolean }> =
+                    ((q as any).config?.options ?? []) as any;
+                  const qType: string = (q as any).questionType ?? "free_text";
                   return (
                     <div
                       key={q.id}
@@ -615,9 +629,34 @@ export default function PublicStationPage() {
                         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-caption font-semibold tabular-nums text-primary">
                           {qi + 1}
                         </span>
-                        <p className="min-w-0 flex-1 text-body font-medium text-foreground">
-                          {q.question}
-                        </p>
+                        <div className="min-w-0 flex-1 space-y-2">
+                          <p className="text-body font-medium text-foreground">
+                            {q.question}
+                          </p>
+                          {(q as any).description && (
+                            <p className="whitespace-pre-wrap text-caption text-muted-foreground">
+                              {(q as any).description}
+                            </p>
+                          )}
+                          {qMedia.length > 0 && (
+                            <div className="grid grid-cols-2 gap-2">
+                              {qMedia.map((m, i) => (
+                                <figure key={`${m.url}-${i}`} className="space-y-1">
+                                  <img
+                                    src={m.url}
+                                    alt={m.caption ?? ""}
+                                    className="aspect-video w-full rounded-lg border border-border/60 object-cover"
+                                  />
+                                  {m.caption && (
+                                    <figcaption className="text-[11px] text-muted-foreground">
+                                      {m.caption}
+                                    </figcaption>
+                                  )}
+                                </figure>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
                       <button
                         onClick={() =>
@@ -638,12 +677,14 @@ export default function PublicStationPage() {
                         />
                       </button>
                       {isOpen && (
-                        <div className="ml-9 mt-3 rounded-xl bg-warm-100/60 p-4">
-                          <p className="whitespace-pre-wrap text-caption text-warm-800">
-                            {q.idealAnswer}
-                          </p>
-                          {q.keyPoints && q.keyPoints.length > 0 && (
-                            <ul className="mt-3 space-y-1 border-t border-border/40 pt-3">
+                        <div className="ml-9 mt-3 space-y-3 rounded-xl bg-warm-100/60 p-4">
+                          {qType === "free_text" && q.idealAnswer && (
+                            <p className="whitespace-pre-wrap text-caption text-warm-800">
+                              {q.idealAnswer}
+                            </p>
+                          )}
+                          {qType === "checklist" && q.keyPoints && q.keyPoints.length > 0 && (
+                            <ul className="space-y-1">
                               {q.keyPoints.map((kp, ki) => (
                                 <li
                                   key={ki}
@@ -654,6 +695,63 @@ export default function PublicStationPage() {
                                 </li>
                               ))}
                             </ul>
+                          )}
+                          {(qType === "multiple_choice" || qType === "multi_select") && opts.length > 0 && (
+                            <ul className="space-y-1">
+                              {opts.map((o, oi) => (
+                                <li
+                                  key={oi}
+                                  className={cn(
+                                    "flex items-start gap-2 text-caption",
+                                    o.isCorrect
+                                      ? "font-semibold text-success"
+                                      : "text-warm-800",
+                                  )}
+                                >
+                                  <span
+                                    className={cn(
+                                      "mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px]",
+                                      o.isCorrect
+                                        ? "bg-success/20"
+                                        : "bg-warm-200",
+                                    )}
+                                  >
+                                    {o.isCorrect ? "✓" : ""}
+                                  </span>
+                                  <span>{o.text}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          {((q as any).explanation || eMedia.length > 0) && (
+                            <div className="space-y-2 border-t border-border/40 pt-3">
+                              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                                Explanation
+                              </p>
+                              {(q as any).explanation && (
+                                <p className="whitespace-pre-wrap text-caption text-warm-800">
+                                  {(q as any).explanation}
+                                </p>
+                              )}
+                              {eMedia.length > 0 && (
+                                <div className="grid grid-cols-2 gap-2">
+                                  {eMedia.map((m, i) => (
+                                    <figure key={`${m.url}-${i}`} className="space-y-1">
+                                      <img
+                                        src={m.url}
+                                        alt={m.caption ?? ""}
+                                        className="aspect-video w-full rounded-lg border border-border/60 object-cover"
+                                      />
+                                      {m.caption && (
+                                        <figcaption className="text-[11px] text-muted-foreground">
+                                          {m.caption}
+                                        </figcaption>
+                                      )}
+                                    </figure>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           )}
                         </div>
                       )}

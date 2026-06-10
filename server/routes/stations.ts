@@ -14,6 +14,24 @@ import { sanitizePublicStation } from "../services/moderation.js";
 
 const router = Router();
 
+// Write-permission helper. For personal stations (collectionId is null),
+// only the owner can write. For group copies (collectionId set), any
+// editor+ member of the collection can write — the userId on the station
+// is just "who minted the fork" and doesn't grant exclusive ownership.
+async function canWriteStation(
+  station: { userId: number; collectionId: number | null },
+  userId: number,
+): Promise<boolean> {
+  if (station.collectionId == null) {
+    return station.userId === userId;
+  }
+  const m = await storage.getCollectionMembership(
+    station.collectionId,
+    userId,
+  );
+  return m?.role === "owner" || m?.role === "editor";
+}
+
 // NOTE: requireAuth is applied per-endpoint below (not globally) so that
 // `GET /:id` can serve public stations to unauthenticated visitors.
 
@@ -36,6 +54,10 @@ const updateStationSchema = z
     difficulty: z.enum(["beginner", "intermediate", "advanced"]).optional(),
     tags: z.array(z.string().max(50)).max(50).optional(),
     customVocabulary: z.array(z.string().max(100)).max(200).optional(),
+    // Accepted by the schema so the editor can send it, but the PUT handler
+    // always overrides this to `false` — an explicit save is by definition
+    // not a draft.
+    isDraft: z.boolean().optional(),
     sections: createStationSchema.shape.sections.optional(),
     examinerQuestions: createStationSchema.shape.examinerQuestions.optional(),
   })
@@ -44,6 +66,11 @@ const updateStationSchema = z
 // GET /api/stations
 router.get("/", requireAuth, async (req, res, next) => {
   try {
+    // Best-effort GC of stale auto-saved drafts (>7 days). Don't block the
+    // fetch if cleanup fails — drafts will just linger until next attempt.
+    storage.cleanupStaleDrafts(req.user!.id).catch((err) => {
+      console.error("[stations] cleanupStaleDrafts failed:", err);
+    });
     const stationsList = await storage.getStations(req.user!.id);
     return res.json(stationsList);
   } catch (err) {
@@ -167,10 +194,11 @@ router.put("/:id", requireAuth, async (req, res, next) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) return res.status(400).json({ message: "Invalid station ID" });
 
-    // Verify ownership
+    // Verify write permission (owner of a personal station, OR editor+
+    // in the collection that owns a group copy).
     const existing = await storage.getStation(id);
     if (!existing) return res.status(404).json({ message: "Station not found" });
-    if (existing.userId !== req.user!.id) {
+    if (!(await canWriteStation(existing, req.user!.id))) {
       return res.status(403).json({ message: "Forbidden" });
     }
 
@@ -182,7 +210,11 @@ router.put("/:id", requireAuth, async (req, res, next) => {
       });
     }
 
-    const updated = await storage.updateStation(id, parsed.data);
+    // Explicit save -> never a draft, regardless of what the client sent.
+    const updated = await storage.updateStation(id, {
+      ...parsed.data,
+      isDraft: false,
+    });
     invalidateSimulatorCache(id);
     return res.json(updated);
   } catch (err) {
@@ -198,7 +230,7 @@ router.delete("/:id", requireAuth, async (req, res, next) => {
 
     const existing = await storage.getStation(id);
     if (!existing) return res.status(404).json({ message: "Station not found" });
-    if (existing.userId !== req.user!.id) {
+    if (!(await canWriteStation(existing, req.user!.id))) {
       return res.status(403).json({ message: "Forbidden" });
     }
 
@@ -267,6 +299,85 @@ router.delete("/:id/publish", requireAuth, async (req, res, next) => {
     }
 
     const updated = await storage.unpublishStation(id);
+    return res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Group copies (pull-back) ──────────────────────────────────
+
+// GET /api/stations/:id/group-copies — list group copies of a personal
+// station, with collection metadata. Owner-only — the personal author
+// is the only one with a pull-back affordance.
+router.get("/:id/group-copies", requireAuth, async (req, res, next) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid station ID" });
+
+    const existing = await storage.getStation(id);
+    if (!existing) return res.status(404).json({ message: "Station not found" });
+    if (existing.userId !== req.user!.id) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    if (existing.collectionId != null) {
+      // Group copies don't have their own group copies.
+      return res.json({ copies: [] });
+    }
+
+    const copies = await storage.listGroupCopiesOfStation(id);
+    return res.json({ copies });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/stations/:id/pull-from-group
+// Replace the personal station's contents with a chosen group copy's.
+// Body: { groupStationId: number }
+// Owner-only on the personal station; v1 is full-replace (no per-item
+// cherry-pick). The personal station identity is preserved (id, userId,
+// createdAt, forkOf, visibility, counts) — existing sessions still link.
+router.post("/:id/pull-from-group", requireAuth, async (req, res, next) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid station ID" });
+
+    const groupStationId = Number(req.body?.groupStationId);
+    if (!Number.isInteger(groupStationId)) {
+      return res
+        .status(400)
+        .json({ message: "groupStationId is required" });
+    }
+
+    const existing = await storage.getStation(id);
+    if (!existing) return res.status(404).json({ message: "Station not found" });
+    if (existing.userId !== req.user!.id) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    if (existing.collectionId != null) {
+      return res
+        .status(400)
+        .json({ message: "Pull-back only applies to personal stations" });
+    }
+
+    const groupCopy = await storage.getStation(groupStationId);
+    if (!groupCopy) {
+      return res.status(404).json({ message: "Group copy not found" });
+    }
+    if (groupCopy.collectionId == null) {
+      return res
+        .status(400)
+        .json({ message: "Source is not a group copy" });
+    }
+    if (groupCopy.forkOf !== id) {
+      return res
+        .status(400)
+        .json({ message: "Group copy is not a fork of this station" });
+    }
+
+    const updated = await storage.pullFromGroupCopy(id, groupStationId);
+    invalidateSimulatorCache(id);
     return res.json(updated);
   } catch (err) {
     next(err);

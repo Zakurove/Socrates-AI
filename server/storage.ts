@@ -1,4 +1,4 @@
-import { eq, and, or, desc, asc, sql, inArray, ilike, isNull } from "drizzle-orm";
+import { eq, and, or, desc, asc, sql, inArray, ilike, isNull, isNotNull } from "drizzle-orm";
 import { randomBytes } from "crypto";
 import { db } from "./db.js";
 import {
@@ -8,6 +8,7 @@ import {
   items,
   itemMedia,
   examinerQuestions,
+  examinerQuestionMedia,
   collections,
   collectionStations,
   collectionMembers,
@@ -104,6 +105,8 @@ export interface IStorage {
   // Stations
   getStations(userId: number): Promise<Station[]>;
   getStation(id: number): Promise<StationWithDetails | undefined>;
+  // Best-effort GC of auto-saved drafts the user never came back to.
+  cleanupStaleDrafts(userId: number): Promise<void>;
   createStation(
     userId: number,
     payload: CreateStationPayload,
@@ -351,11 +354,31 @@ export interface IStorage {
   forkStation(
     sourceId: number,
     newOwnerId: number,
+    opts?: { collectionId?: number },
   ): Promise<StationWithDetails>;
   forkCollection(
     sourceId: number,
     newOwnerId: number,
   ): Promise<Collection>;
+
+  // Group-copy pull-back: replace the personal station's content with the
+  // group copy's content. Personal station identity (id, userId, createdAt,
+  // forkOf, visibility, counts) is preserved.
+  pullFromGroupCopy(
+    personalStationId: number,
+    groupStationId: number,
+  ): Promise<StationWithDetails>;
+
+  // List the group copies of a personal station (stations where
+  // fork_of = personalStationId AND collection_id IS NOT NULL).
+  listGroupCopiesOfStation(
+    personalStationId: number,
+  ): Promise<
+    Array<{
+      station: Station;
+      collection: { id: number; title: string };
+    }>
+  >;
 
   // Stars
   starStation(userId: number, stationId: number): Promise<void>;
@@ -573,11 +596,27 @@ class DatabaseStorage implements IStorage {
   // ─── Stations ───────────────────────────────────────────
 
   async getStations(userId: number): Promise<Station[]> {
+    // "My Stations" = personal stations only. Group copies live inside
+    // their collection, not in the user's personal library — even though
+    // the userId on the fork happens to point at this user (it's just the
+    // sharer audit, not ownership).
     return db
       .select()
       .from(stations)
-      .where(eq(stations.userId, userId))
+      .where(and(eq(stations.userId, userId), isNull(stations.collectionId)))
       .orderBy(desc(stations.updatedAt)) as unknown as Promise<Station[]>;
+  }
+
+  async cleanupStaleDrafts(userId: number): Promise<void> {
+    await db
+      .delete(stations)
+      .where(
+        and(
+          eq(stations.userId, userId),
+          eq(stations.isDraft, true),
+          sql`${stations.updatedAt} < NOW() - INTERVAL '7 days'`,
+        ),
+      );
   }
 
   async getStation(id: number): Promise<StationWithDetails | undefined> {
@@ -612,6 +651,9 @@ class DatabaseStorage implements IStorage {
         },
         examinerQuestions: {
           orderBy: [asc(examinerQuestions.order)],
+          with: {
+            media: { orderBy: [asc(examinerQuestionMedia.order)] },
+          },
         },
       },
     });
@@ -642,6 +684,9 @@ class DatabaseStorage implements IStorage {
           specialty: payload.specialty,
           difficulty: payload.difficulty,
           tags: payload.tags,
+          // Editor auto-POSTs a minimal station on first keystroke. Default to
+          // draft = true so the row is flagged until the user explicitly saves.
+          isDraft: (payload as any).isDraft ?? true,
         })
         .returning()) as Station[];
       const station = stationRows[0];
@@ -770,23 +815,53 @@ class DatabaseStorage implements IStorage {
         sectionsWithItems.push({ ...section, items: itemsWithSubs });
       }
 
-      // 3. Create examiner questions
+      // 3. Create examiner questions (+ media rows). The legacy
+      // image_url column is mirrored from the first 'question'-phase
+      // image in `media` for backwards-compatible reads.
       const eqRows: ExaminerQuestion[] = [];
       for (const eqPayload of payload.examinerQuestions) {
+        const media = (eqPayload as any).media ?? [];
+        // Only mirror to the legacy single-image column when the first
+        // question-phase image is allowed to appear during the exam.
+        // Otherwise an old client (which still reads imageUrl) would
+        // expose a study-only image during examination — a cheating leak.
+        const legacyImageUrl =
+          eqPayload.imageUrl ??
+          media.find(
+            (m: any) =>
+              m.type === "image" &&
+              (m.phase ?? "question") === "question" &&
+              (m.visibility ?? "exam") !== "study",
+          )?.url ??
+          null;
         const eqResultRows = (await tx
           .insert(examinerQuestions)
           .values({
             stationId: station.id,
             question: eqPayload.question,
+            description: (eqPayload as any).description ?? null,
             questionType: eqPayload.questionType ?? "free_text",
             idealAnswer: eqPayload.idealAnswer ?? null,
             keyPoints: eqPayload.keyPoints,
+            explanation: (eqPayload as any).explanation ?? null,
             config: (eqPayload.config ?? null) as any,
-            imageUrl: eqPayload.imageUrl ?? null,
+            imageUrl: legacyImageUrl,
             order: eqPayload.order,
           })
           .returning()) as ExaminerQuestion[];
-        eqRows.push(eqResultRows[0]);
+        const eqRow = eqResultRows[0];
+        eqRows.push(eqRow);
+        for (const m of media) {
+          await tx.insert(examinerQuestionMedia).values({
+            questionId: eqRow.id,
+            type: m.type,
+            url: m.url,
+            caption: m.caption ?? null,
+            order: m.order ?? 0,
+            phase: m.phase ?? "question",
+            visibility: m.visibility ?? (m.phase === "explanation" ? "study" : "exam"),
+          });
+        }
       }
 
       return {
@@ -827,6 +902,7 @@ class DatabaseStorage implements IStorage {
       "customVocabulary",
       "referenceImageUrl",
       "referenceImageCaption",
+      "isDraft",
     ];
     for (const k of allowed) {
       if (k in flatRaw && (flatRaw as any)[k] !== undefined) {
@@ -961,21 +1037,52 @@ class DatabaseStorage implements IStorage {
       }
 
       if (eqPayload) {
+        // Cascade kills any existing examiner_question_media too.
         await tx
           .delete(examinerQuestions)
           .where(eq(examinerQuestions.stationId, id));
 
         for (const q of eqPayload) {
-          await tx.insert(examinerQuestions).values({
-            stationId: id,
-            question: q.question,
-            questionType: q.questionType ?? "free_text",
-            idealAnswer: q.idealAnswer ?? null,
-            keyPoints: q.keyPoints,
-            config: (q.config ?? null) as any,
-            imageUrl: q.imageUrl ?? null,
-            order: q.order,
-          });
+          const media = (q as any).media ?? [];
+          // Same visibility gate as createStation: never mirror a
+          // study-only image into the legacy single-image column.
+          const legacyImageUrl =
+            q.imageUrl ??
+            media.find(
+              (m: any) =>
+                m.type === "image" &&
+                (m.phase ?? "question") === "question" &&
+                (m.visibility ?? "exam") !== "study",
+            )?.url ??
+            null;
+          const insertedRows = (await tx
+            .insert(examinerQuestions)
+            .values({
+              stationId: id,
+              question: q.question,
+              description: (q as any).description ?? null,
+              questionType: q.questionType ?? "free_text",
+              idealAnswer: q.idealAnswer ?? null,
+              keyPoints: q.keyPoints,
+              explanation: (q as any).explanation ?? null,
+              config: (q.config ?? null) as any,
+              imageUrl: legacyImageUrl,
+              order: q.order,
+            })
+            .returning()) as ExaminerQuestion[];
+          const insertedQ = insertedRows[0];
+          for (const m of media) {
+            await tx.insert(examinerQuestionMedia).values({
+              questionId: insertedQ.id,
+              type: m.type,
+              url: m.url,
+              caption: m.caption ?? null,
+              order: m.order ?? 0,
+              phase: m.phase ?? "question",
+              visibility:
+                m.visibility ?? (m.phase === "explanation" ? "study" : "exam"),
+            });
+          }
         }
       }
     });
@@ -1174,11 +1281,22 @@ class DatabaseStorage implements IStorage {
               // checklist questions can render the per-item breakdown
               // against the canonical keyPoint list (the matcher's
               // pointResults are validated against it on save).
+              // description + explanation feed the post-grading study
+              // panel; media is for the figures attached to either side.
               columns: {
                 question: true,
+                description: true,
                 idealAnswer: true,
                 questionType: true,
                 keyPoints: true,
+                explanation: true,
+                // Needed so the results page can render MCQ / multi_select
+                // option lists with the correct option(s) highlighted.
+                config: true,
+                imageUrl: true,
+              },
+              with: {
+                media: { orderBy: [asc(examinerQuestionMedia.order)] },
               },
             },
           },
@@ -1972,6 +2090,7 @@ class DatabaseStorage implements IStorage {
   async forkStation(
     sourceId: number,
     newOwnerId: number,
+    opts: { collectionId?: number } = {},
   ): Promise<StationWithDetails> {
     return db.transaction(async (tx) => {
       const source = await db.query.stations.findFirst({
@@ -1990,6 +2109,9 @@ class DatabaseStorage implements IStorage {
           },
           examinerQuestions: {
             orderBy: [asc(examinerQuestions.order)],
+            with: {
+              media: { orderBy: [asc(examinerQuestionMedia.order)] },
+            },
           },
         },
       });
@@ -1997,11 +2119,15 @@ class DatabaseStorage implements IStorage {
         throw new Error(`Source station ${sourceId} not found`);
       }
 
-      // 1. Insert new station (private by default, forkOf=source)
+      // 1. Insert new station (private by default, forkOf=source).
+      // When `opts.collectionId` is set, this is a group-copy fork: the
+      // station is owned by the collection and editable by collection
+      // editors. Otherwise it's a personal fork into newOwnerId's library.
       const [newStation] = (await tx
         .insert(stations)
         .values({
           userId: newOwnerId,
+          collectionId: opts.collectionId ?? null,
           title: source.title,
           type: source.type,
           defaultTimeMinutes: source.defaultTimeMinutes,
@@ -2123,18 +2249,35 @@ class DatabaseStorage implements IStorage {
         }
       }
 
-      // 3. Examiner questions
+      // 3. Examiner questions + media
       for (const q of source.examinerQuestions as any[]) {
-        await tx.insert(examinerQuestions).values({
-          stationId: newStation.id,
-          question: q.question,
-          questionType: q.questionType ?? "free_text",
-          idealAnswer: q.idealAnswer ?? null,
-          keyPoints: q.keyPoints,
-          config: q.config ?? null,
-          imageUrl: q.imageUrl ?? null,
-          order: q.order,
-        });
+        const insertedRows = (await tx
+          .insert(examinerQuestions)
+          .values({
+            stationId: newStation.id,
+            question: q.question,
+            description: q.description ?? null,
+            questionType: q.questionType ?? "free_text",
+            idealAnswer: q.idealAnswer ?? null,
+            keyPoints: q.keyPoints,
+            explanation: q.explanation ?? null,
+            config: q.config ?? null,
+            imageUrl: q.imageUrl ?? null,
+            order: q.order,
+          })
+          .returning()) as ExaminerQuestion[];
+        const newQ = insertedRows[0];
+        for (const m of (q.media ?? []) as any[]) {
+          await tx.insert(examinerQuestionMedia).values({
+            questionId: newQ.id,
+            type: m.type,
+            url: m.url,
+            caption: m.caption ?? null,
+            order: m.order,
+            phase: m.phase ?? "question",
+            visibility: m.visibility ?? "exam",
+          });
+        }
       }
 
       // 4. Bump fork count on source
@@ -2153,6 +2296,242 @@ class DatabaseStorage implements IStorage {
       if (!full) throw new Error("Fork created but could not read back");
       return full;
     });
+  }
+
+  // List group copies of a personal station, with the collection metadata
+  // each one belongs to. Used by the personal-station detail page to
+  // surface "the group edited your station" + a pull-back affordance.
+  async listGroupCopiesOfStation(
+    personalStationId: number,
+  ): Promise<
+    Array<{
+      station: Station;
+      collection: { id: number; title: string };
+    }>
+  > {
+    const rows = await db
+      .select({
+        station: stations,
+        collectionId: collections.id,
+        collectionTitle: collections.title,
+      })
+      .from(stations)
+      .innerJoin(collections, eq(collections.id, stations.collectionId))
+      .where(
+        and(
+          eq(stations.forkOf, personalStationId),
+          isNotNull(stations.collectionId),
+        ),
+      )
+      .orderBy(desc(stations.updatedAt));
+    return rows.map((r) => ({
+      station: r.station as Station,
+      collection: { id: r.collectionId, title: r.collectionTitle },
+    }));
+  }
+
+  // Replace a personal station's content (sections, items, media, examiner
+  // questions, plus most metadata) with the group copy's content.
+  // Preserves personal identity: id, userId, createdAt, forkOf, visibility,
+  // starCount, forkCount, practiceCount, collectionId(=null), isDraft.
+  // Existing sessions/results referencing the personal stationId remain
+  // intact (they reference station.id which doesn't change).
+  async pullFromGroupCopy(
+    personalStationId: number,
+    groupStationId: number,
+  ): Promise<StationWithDetails> {
+    const groupCopy = await db.query.stations.findFirst({
+      where: eq(stations.id, groupStationId),
+      with: {
+        sections: {
+          orderBy: [asc(sections.order)],
+          with: {
+            items: {
+              orderBy: [asc(items.order)],
+              with: { media: { orderBy: [asc(itemMedia.order)] } },
+            },
+          },
+        },
+        examinerQuestions: {
+          orderBy: [asc(examinerQuestions.order)],
+          with: { media: { orderBy: [asc(examinerQuestionMedia.order)] } },
+        },
+      },
+    });
+    if (!groupCopy) {
+      throw new Error(`Group copy station ${groupStationId} not found`);
+    }
+    if (groupCopy.collectionId == null) {
+      throw new Error(
+        `Station ${groupStationId} is not a group copy (collectionId is null)`,
+      );
+    }
+    if (groupCopy.forkOf !== personalStationId) {
+      throw new Error(
+        `Group copy ${groupStationId} is not a fork of personal station ${personalStationId}`,
+      );
+    }
+
+    await db.transaction(async (tx) => {
+      // 1. Update metadata on the personal station (preserve identity).
+      await tx
+        .update(stations)
+        .set({
+          title: groupCopy.title,
+          type: groupCopy.type,
+          defaultTimeMinutes: groupCopy.defaultTimeMinutes,
+          readingTimeMinutes: groupCopy.readingTimeMinutes,
+          scenario: groupCopy.scenario,
+          patientBriefing: groupCopy.patientBriefing,
+          hasPatientBriefing: groupCopy.hasPatientBriefing,
+          aiPatientEnabled: groupCopy.aiPatientEnabled,
+          specialty: groupCopy.specialty,
+          difficulty: groupCopy.difficulty,
+          tags: groupCopy.tags,
+          customVocabulary: groupCopy.customVocabulary,
+          referenceImageUrl: groupCopy.referenceImageUrl,
+          referenceImageCaption: groupCopy.referenceImageCaption,
+          updatedAt: new Date(),
+        })
+        .where(eq(stations.id, personalStationId));
+
+      // 2. Wipe existing children. CASCADE on sections → items, items →
+      // media; CASCADE on stations → examiner_questions.
+      await tx
+        .delete(sections)
+        .where(eq(sections.stationId, personalStationId));
+      await tx
+        .delete(examinerQuestions)
+        .where(eq(examinerQuestions.stationId, personalStationId));
+
+      // 3. Deep-copy children from group copy (same shape as forkStation).
+      const sourceItems = await tx
+        .select()
+        .from(items)
+        .where(
+          inArray(
+            items.sectionId,
+            (groupCopy.sections as any[]).map((s) => s.id),
+          ),
+        );
+      const sourceMedia =
+        sourceItems.length > 0
+          ? await tx
+              .select()
+              .from(itemMedia)
+              .where(
+                inArray(
+                  itemMedia.itemId,
+                  sourceItems.map((i) => i.id),
+                ),
+              )
+          : [];
+
+      const itemsBySection = new Map<number, Item[]>();
+      for (const it of sourceItems) {
+        const arr = itemsBySection.get(it.sectionId) ?? [];
+        arr.push(it);
+        itemsBySection.set(it.sectionId, arr);
+      }
+      const mediaByItem = new Map<number, ItemMedia[]>();
+      for (const m of sourceMedia) {
+        const arr = mediaByItem.get(m.itemId) ?? [];
+        arr.push(m);
+        mediaByItem.set(m.itemId, arr);
+      }
+      const itemIdMap = new Map<number, number>();
+
+      for (const srcSection of groupCopy.sections as any[]) {
+        const [newSection] = (await tx
+          .insert(sections)
+          .values({
+            stationId: personalStationId,
+            title: srcSection.title,
+            order: srcSection.order,
+            description: srcSection.description ?? null,
+            imageUrl: srcSection.imageUrl ?? null,
+            imageCaption: srcSection.imageCaption ?? null,
+          })
+          .returning()) as Section[];
+
+        const sectionItems = itemsBySection.get(srcSection.id) ?? [];
+        for (const srcItem of sectionItems) {
+          const [newItem] = (await tx
+            .insert(items)
+            .values({
+              sectionId: newSection.id,
+              parentItemId: null,
+              text: srcItem.text,
+              isCritical: srcItem.isCritical,
+              points: srcItem.points,
+              order: srcItem.order,
+              explanation: srcItem.explanation,
+              imageUrl: srcItem.imageUrl,
+              imageCaption: srcItem.imageCaption,
+              videoUrl: srcItem.videoUrl,
+            })
+            .returning()) as Item[];
+          itemIdMap.set(srcItem.id, newItem.id);
+
+          for (const m of mediaByItem.get(srcItem.id) ?? []) {
+            await tx.insert(itemMedia).values({
+              itemId: newItem.id,
+              type: m.type,
+              url: m.url,
+              caption: m.caption,
+              order: m.order,
+            });
+          }
+        }
+
+        for (const srcItem of sectionItems) {
+          if (srcItem.parentItemId != null) {
+            const newId = itemIdMap.get(srcItem.id);
+            const newParentId = itemIdMap.get(srcItem.parentItemId);
+            if (newId && newParentId) {
+              await tx
+                .update(items)
+                .set({ parentItemId: newParentId })
+                .where(eq(items.id, newId));
+            }
+          }
+        }
+      }
+
+      for (const q of groupCopy.examinerQuestions as any[]) {
+        const insertedRows = (await tx
+          .insert(examinerQuestions)
+          .values({
+            stationId: personalStationId,
+            question: q.question,
+            description: q.description ?? null,
+            questionType: q.questionType ?? "free_text",
+            idealAnswer: q.idealAnswer ?? null,
+            keyPoints: q.keyPoints,
+            explanation: q.explanation ?? null,
+            config: q.config ?? null,
+            imageUrl: q.imageUrl ?? null,
+            order: q.order,
+          })
+          .returning()) as ExaminerQuestion[];
+        const newQ = insertedRows[0];
+        for (const m of (q.media ?? []) as any[]) {
+          await tx.insert(examinerQuestionMedia).values({
+            questionId: newQ.id,
+            type: m.type,
+            url: m.url,
+            caption: m.caption ?? null,
+            order: m.order,
+            phase: m.phase ?? "question",
+            visibility: m.visibility ?? "exam",
+          });
+        }
+      }
+    });
+
+    const full = await this.getStation(personalStationId);
+    if (!full) throw new Error("Pull-back succeeded but could not read back");
+    return full;
   }
 
   async forkCollection(

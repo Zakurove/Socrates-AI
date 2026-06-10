@@ -1476,12 +1476,78 @@ function QuestionBody({
     setClChecked(new Set());
   }, [question.id]);
 
-  const image = question.imageUrl ? (
-    <img
-      src={question.imageUrl}
-      alt="Question image"
-      className="mb-4 max-h-64 w-full rounded-xl object-contain"
-    />
+  // Self-check practice is an exam — only show question-phase media
+  // tagged exam-visible. Explanation media stays hidden until the user
+  // reveals the answer.
+  const questionMedia: Array<{
+    type: "image" | "video";
+    url: string;
+    caption?: string | null;
+    phase: "question" | "explanation";
+    visibility: "exam" | "study" | "both";
+  }> = Array.isArray(question.media) ? question.media : [];
+  const examQuestionMedia = questionMedia.filter(
+    (m) =>
+      m.phase === "question" &&
+      (m.visibility === "exam" || m.visibility === "both"),
+  );
+  const explanationMedia = questionMedia.filter(
+    (m) => m.phase === "explanation",
+  );
+
+  const renderImageGrid = (
+    items: Array<{ url: string; caption?: string | null }>,
+  ) =>
+    items.length === 0 ? null : (
+      <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {items.map((m, i) => (
+          <figure key={`${m.url}-${i}`} className="space-y-1">
+            <img
+              src={m.url}
+              alt={m.caption ?? ""}
+              className="max-h-64 w-full rounded-xl object-contain"
+            />
+            {m.caption && (
+              <figcaption className="text-xs text-muted-foreground">
+                {m.caption}
+              </figcaption>
+            )}
+          </figure>
+        ))}
+      </div>
+    );
+
+  // Only render question-phase, exam-visible media. We deliberately do
+  // NOT fall back to question.imageUrl: the legacy column may mirror a
+  // study-only image (e.g. an old client sending it in) and rendering
+  // it during the exam would leak study material to the learner.
+  const image =
+    examQuestionMedia.length > 0 ? renderImageGrid(examQuestionMedia) : null;
+
+  const description = question.description ? (
+    <p className="mb-4 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+      {question.description}
+    </p>
+  ) : null;
+
+  // Reusable explanation panel. Renders to null when there's nothing to
+  // show. Callers decide WHEN to insert it — after the free_text reveal,
+  // after an MCQ choice, after MS submit, after checklist self-grade —
+  // so it always reads as "study material after answering."
+  const hasExplanationContent =
+    !!question.explanation || explanationMedia.length > 0;
+  const explanationBlock = hasExplanationContent ? (
+    <div className="mt-4 space-y-2 rounded-xl border border-border/50 bg-muted/20 p-4">
+      <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+        Explanation
+      </p>
+      {question.explanation && (
+        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+          {question.explanation}
+        </p>
+      )}
+      {explanationMedia.length > 0 && renderImageGrid(explanationMedia)}
+    </div>
   ) : null;
 
   if (qType === "checklist") {
@@ -1495,6 +1561,7 @@ function QuestionBody({
       return (
         <>
           {image}
+          {description}
           <p className="mb-8 text-base font-medium leading-relaxed">
             {question.question}
           </p>
@@ -1522,6 +1589,7 @@ function QuestionBody({
       return (
         <>
           {image}
+          {description}
           <p className="mb-8 text-base font-medium leading-relaxed">
             {question.question}
           </p>
@@ -1544,6 +1612,7 @@ function QuestionBody({
     return (
       <>
         {image}
+        {description}
         <p className="mb-4 text-base font-medium leading-relaxed">
           {question.question}
         </p>
@@ -1592,6 +1661,7 @@ function QuestionBody({
         <p className="mb-3 text-center text-caption text-muted-foreground">
           {coveredCount} of {total} covered — {Math.round(computed * 100)}%
         </p>
+        {explanationBlock}
         <div className="flex justify-center">
           <Button
             onClick={() =>
@@ -1621,6 +1691,7 @@ function QuestionBody({
     return (
       <>
         {image}
+        {description}
         <p className="mb-6 text-base font-medium leading-relaxed">{question.question}</p>
         <div className="space-y-2">
           {options.map((opt, i) => {
@@ -1646,15 +1717,18 @@ function QuestionBody({
           })}
         </div>
         {revealed && (
-          <div className="mt-6 flex justify-center">
-            <Button
-              onClick={() => scoreQuestion(mcSelected === correctIdx ? 1.0 : 0)}
-              disabled={isScoringTransition}
-              size="lg"
-            >
-              Next
-            </Button>
-          </div>
+          <>
+            {explanationBlock}
+            <div className="mt-6 flex justify-center">
+              <Button
+                onClick={() => scoreQuestion(mcSelected === correctIdx ? 1.0 : 0)}
+                disabled={isScoringTransition}
+                size="lg"
+              >
+                Next
+              </Button>
+            </div>
+          </>
         )}
       </>
     );
@@ -1672,6 +1746,7 @@ function QuestionBody({
     return (
       <>
         {image}
+        {description}
         <p className="mb-2 text-base font-medium leading-relaxed">{question.question}</p>
         <p className="mb-4 text-caption text-muted-foreground">
           Pick at least {threshold} correct option{threshold === 1 ? "" : "s"}.
@@ -1722,6 +1797,7 @@ function QuestionBody({
               You got {correctHits} of {threshold} needed
               {score >= 1 ? " — full credit" : score > 0 ? ` — ${Math.round(score * 100)}% credit` : " — no credit"}.
             </p>
+            {explanationBlock}
             <div className="flex justify-center">
               <Button
                 onClick={() => scoreQuestion(score)}
@@ -1741,7 +1817,8 @@ function QuestionBody({
   return (
     <>
       {image}
-      <p className="mb-8 text-base font-medium leading-relaxed">{question.question}</p>
+      <p className="mb-3 text-base font-medium leading-relaxed">{question.question}</p>
+      {description}
       {!showAnswer ? (
         <Button variant="outline" size="lg" onClick={() => setShowAnswer(true)} className="mb-6 w-full">
           Reveal Answer
@@ -1754,6 +1831,7 @@ function QuestionBody({
               <p className="whitespace-pre-wrap text-sm leading-relaxed">{question.idealAnswer}</p>
             </CardContent>
           </Card>
+          {explanationBlock}
           <p className="mb-3 text-center text-sm font-medium text-muted-foreground">
             How did you do? <span className="text-xs text-muted-foreground/70">(1 / 2 / 3)</span>
           </p>
