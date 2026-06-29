@@ -32,6 +32,27 @@ async function canWriteStation(
   return m?.role === "owner" || m?.role === "editor";
 }
 
+// Read-permission helper. Personal stations: owner only (visibility !=
+// public/shared is enforced elsewhere). Group copies: ANY member of
+// the collection — viewer included — can read, because the whole point
+// of sharing into a group is that the group can see it. Without this,
+// non-owner members hit a 403 on the private branch and the client
+// renders "Station not found" for stations they can plainly see in
+// the group's list.
+async function canReadStation(
+  station: { userId: number; collectionId: number | null },
+  userId: number,
+): Promise<boolean> {
+  if (station.collectionId == null) {
+    return station.userId === userId;
+  }
+  const m = await storage.getCollectionMembership(
+    station.collectionId,
+    userId,
+  );
+  return m != null;
+}
+
 // NOTE: requireAuth is applied per-endpoint below (not globally) so that
 // `GET /:id` can serve public stations to unauthenticated visitors.
 
@@ -146,8 +167,14 @@ router.get("/:id", async (req, res, next) => {
       return res.json(station);
     }
 
-    // Private: ownership only (or admin).
-    if (station.userId !== req.user!.id && !isAdmin) {
+    // Private: ownership only (or admin) — UNLESS this is a group copy
+    // (collectionId set), in which case any collection member can read.
+    // The fork is "private" in the sense that it's not in the public
+    // library; collection members are still its intended audience.
+    if (
+      !isAdmin &&
+      !(await canReadStation(station, req.user!.id))
+    ) {
       return res.status(403).json({ message: "Forbidden" });
     }
 
